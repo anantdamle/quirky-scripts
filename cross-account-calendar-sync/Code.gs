@@ -16,8 +16,8 @@ const CONFIG = {
   THIS_ACCOUNT_ORIGIN_NAME: 'ORG_B', 
   
   // Internal tags used to prevent infinite loops and map events
-  ORIGINAL_CALENDAR_ID_KEY: 'ORIGINAL_CALENDAR_ID',
-  ORIGINAL_EVENT_ID_KEY: 'ORIGINAL_EVENT_ID',
+  ORIGINAL_CALENDAR_ID_KEY: 'originalCalendarId',
+  ORIGINAL_EVENT_ID_KEY: 'originalId',
   COPIED_EVENT_KEY: 'IS_COPIED_EVENT'
 };
 

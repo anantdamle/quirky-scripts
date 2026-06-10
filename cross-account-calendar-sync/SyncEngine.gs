@@ -2,7 +2,27 @@
  * Handles the pagination and Calendar API list requests
  */
 const SyncEngine = {
-  
+
+  /**
+   * Wraps a Calendar API call with exponential backoff on rate-limit errors.
+   */
+  callWithBackoff: function(apiCall, maxRetries) {
+    maxRetries = maxRetries || 5;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return apiCall();
+      } catch (e) {
+        if ((e.message.includes('Quota exceeded') || e.message.includes('Rate Limit') || e.message.includes('429')) && attempt < maxRetries) {
+          const wait = Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 1000);
+          Logger.log(`Rate limited, backing off ${wait}ms (attempt ${attempt + 1}/${maxRetries})`);
+          Utilities.sleep(wait);
+        } else {
+          throw e;
+        }
+      }
+    }
+  },
+
   performSync: function(params) {
     const { sourceId, targetId, timeMin, stripDetails, directionSourceOrigin } = params;
     let pageToken = null;
@@ -32,7 +52,9 @@ const SyncEngine = {
       
       let response;
       try {
-        response = Calendar.Events.list(sourceId, options);
+        response = SyncEngine.callWithBackoff(function() {
+          return Calendar.Events.list(sourceId, options);
+        });
       } catch (e) {
         // Handle expired/invalid sync tokens gracefully (HTTP 410 Gone)
         if (e.message.includes('Sync token') || e.message.includes('410') || e.message.includes('full sync')) {
@@ -49,6 +71,10 @@ const SyncEngine = {
         for (let i = 0; i < events.length; i++) {
           EventProcessor.processSingleEvent(events[i], sourceId, targetId, stripDetails, directionSourceOrigin);
           processedCount++;
+          // Throttle to stay under per-minute quota on large initial syncs
+          if (processedCount % 20 === 0) {
+            Utilities.sleep(1000);
+          }
         }
       }
       pageToken = response.nextPageToken;
