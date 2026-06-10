@@ -22,42 +22,82 @@ const CONFIG = {
 };
 
 /**
- * Main trigger function. 
- * Run this manually once, or set it up in Triggers to run Time-Driven (e.g. every 15 mins).
+ * Main function triggered by Calendar event changes.
+ * Runs manually (syncs both) or via trigger (syncs only the changed calendar).
  */
-function syncAllDirections() {
-  // Look back 14 days to catch recent changes and exceptions
-  const timeMin = new Date();
-  timeMin.setDate(timeMin.getDate() - 14); 
+function onCalendarUpdate(e) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log('Another sync in progress, skipping.');
+    return;
+  }
 
-  // 1. Sync THIS Account (B/C) to Personal (A) -> Keep Full Details
-  SyncEngine.performSync({
-    sourceId: CONFIG.THIS_ACCOUNT_CALENDAR_ID,
-    targetId: CONFIG.CALENDAR_A_ID,
-    timeMin: timeMin.toISOString(),
-    stripDetails: false,
-    directionSourceOrigin: CONFIG.THIS_ACCOUNT_ORIGIN_NAME
-  });
+  try {
+    // Look back 14 days to catch recent changes and exceptions (fallback if no syncToken)
+    const timeMin = new Date();
+    timeMin.setDate(timeMin.getDate() - 14); 
+    
+    // The event object 'e' will contain the ID of the calendar that triggered the update.
+    const changedCalendarId = e ? e.calendarId : null;
+    const myEmail = Session.getEffectiveUser().getEmail();
+    
+    // Determine if we should treat 'primary' as the trigger source
+    const isSpokeChanged = !changedCalendarId || changedCalendarId === myEmail || changedCalendarId === CONFIG.THIS_ACCOUNT_CALENDAR_ID;
+    const isHubChanged = !changedCalendarId || changedCalendarId === CONFIG.CALENDAR_A_ID;
 
-  // 2. Sync Personal (A) to THIS Account (B/C) -> Strip Details for Privacy
-  SyncEngine.performSync({
-    sourceId: CONFIG.CALENDAR_A_ID,
-    targetId: CONFIG.THIS_ACCOUNT_CALENDAR_ID,
-    timeMin: timeMin.toISOString(),
-    stripDetails: true,
-    directionSourceOrigin: 'PERSONAL_A'
-  });
+    // 1. Sync THIS Account (B/C) to Personal (A) -> Keep Full Details
+    if (isSpokeChanged) {
+      SyncEngine.performSync({
+        sourceId: CONFIG.THIS_ACCOUNT_CALENDAR_ID,
+        targetId: CONFIG.CALENDAR_A_ID,
+        timeMin: timeMin.toISOString(),
+        stripDetails: false,
+        directionSourceOrigin: CONFIG.THIS_ACCOUNT_ORIGIN_NAME
+      });
+    }
+
+    // 2. Sync Personal (A) to THIS Account (B/C) -> Strip Details for Privacy
+    if (isHubChanged) {
+      SyncEngine.performSync({
+        sourceId: CONFIG.CALENDAR_A_ID,
+        targetId: CONFIG.THIS_ACCOUNT_CALENDAR_ID,
+        timeMin: timeMin.toISOString(),
+        stripDetails: true,
+        directionSourceOrigin: 'PERSONAL_A'
+      });
+    }
+  } finally {
+    lock.releaseLock();
+  }
 }
 
-function registerTimeDrivenTrigger() {
+/**
+ * Setup UserCalendar Event Triggers instead of time-driven polling.
+ * Run this ONCE manually to authorize and create the hooks.
+ */
+function registerCalendarTriggers() {
   // Deletes existing triggers to prevent duplicates
   ScriptApp.getProjectTriggers().forEach(trigger => ScriptApp.deleteTrigger(trigger));
   
-  // Creates a trigger to run every 15 minutes
-  ScriptApp.newTrigger('syncAllDirections')
-    .timeBased()
-    .everyMinutes(15)
+  const myEmail = Session.getEffectiveUser().getEmail();
+  
+  // Creates a trigger for the Spoke (THIS_ACCOUNT) calendar
+  ScriptApp.newTrigger('onCalendarUpdate')
+    .forUserCalendar(myEmail)
+    .onEventUpdated()
     .create();
     
-  Logger.log('15-minute trigger created successfully.');
+  // Creates a trigger for the Hub (CALENDAR_A) calendar
+  ScriptApp.newTrigger('onCalendarUpdate')
+    .forUserCalendar(CONFIG.CALENDAR_A_ID)
+    .onEventUpdated()
+    .create();
+
+  // Safety-net poll: onEventUpdated can occasionally miss or delay notifications
+  ScriptApp.newTrigger('onCalendarUpdate')
+    .timeBased()
+    .everyHours(1)
+    .create();
+    
+  Logger.log('Calendar event triggers + hourly safety poll created for ' + myEmail + ' and ' + CONFIG.CALENDAR_A_ID);
 }

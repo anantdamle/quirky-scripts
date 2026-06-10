@@ -29,7 +29,9 @@ Each spoke runs its own copy of the script with a unique `THIS_ACCOUNT_ORIGIN_NA
 
 **Native recurrence handling.** The API is queried with `singleEvents: false`, which returns master recurring event objects with their `recurrence` RRULE intact. This correctly handles infinite recurrences without exploding them into thousands of instances.
 
-**Incremental sync with tokens.** After the initial run (which uses `updatedMin` as a 14-day lookback), subsequent runs use the Google Calendar `syncToken` for efficient delta processing. Expired tokens are detected and trigger a full re-sync on the next cycle.
+**Event-driven sync with safety poll.** Calendar changes fire `onEventUpdated` triggers, invoking the sync within seconds of a change. An hourly time-driven trigger acts as a safety net for any missed notifications. Both paths use the Google Calendar `syncToken` for efficient delta processing. Expired tokens are detected and trigger a full re-sync on the next cycle.
+
+**Concurrency protection via LockService.** Since event triggers can fire in rapid succession (e.g., bulk edits), `onCalendarUpdate` acquires a script lock before processing. Overlapping invocations are skipped rather than risking syncToken corruption.
 
 **Exception event retry.** Since the Calendar API doesn't guarantee master events appear before their exceptions in a response page, exception events that can't find their master on the target are deferred and retried after all events in the current cycle are processed.
 
@@ -39,7 +41,7 @@ Each spoke runs its own copy of the script with a unique `THIS_ACCOUNT_ORIGIN_NA
 
 | File | Purpose |
 |------|---------|
-| `Code.gs` | Configuration, entry point (`syncAllDirections`), and trigger registration |
+| `Code.gs` | Configuration, entry point (`onCalendarUpdate`), and trigger registration |
 | `SyncEngine.gs` | Pagination, sync token management, and API list calls |
 | `EventProcessor.gs` | Per-event logic: loop guards, payload construction, recurrence mapping, upsert |
 
@@ -51,8 +53,9 @@ Each spoke runs its own copy of the script with a unique `THIS_ACCOUNT_ORIGIN_NA
 4. Edit `CONFIG` in `Code.gs`:
    - Set `CALENDAR_A_ID` to the hub calendar's email address.
    - Set `THIS_ACCOUNT_ORIGIN_NAME` to a unique identifier for this spoke (e.g., `'ORG_B'`).
-5. Run `registerTimeDrivenTrigger()` once to create the 15-minute polling trigger.
-6. On first run, grant calendar read/write permissions when prompted.
+5. Ensure the hub calendar is shared with the spoke account (read/write access required).
+6. Run `registerCalendarTriggers()` once to create the event-driven triggers and hourly safety poll.
+7. On first run, grant calendar read/write permissions when prompted.
 
 Repeat for each additional spoke account, changing `THIS_ACCOUNT_ORIGIN_NAME` to a distinct value.
 
@@ -62,6 +65,6 @@ When syncing from the hub back to a spoke (`stripDetails: true`), event titles a
 
 ## Limitations
 
-- Sync is polling-based (every 15 minutes), not push/real-time.
+- Sync is event-driven but not instant — `onEventUpdated` triggers may be delayed or batched by Google (typically under a minute, occasionally longer). An hourly safety poll ensures no updates are permanently missed.
 - The `extendedProperties.private` map is replaced on patch, which may overwrite private properties set by other systems on the same event.
 - Apps Script execution time limit is 6 minutes per run. Very large calendars may need a shorter lookback window or per-direction execution.
