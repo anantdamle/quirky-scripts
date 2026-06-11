@@ -84,6 +84,18 @@ const EventProcessor = {
       newEvent.location = sourceEvent.location || '';
     }
 
+    // --- 4b. COLOR ---
+    if (directionSourceOrigin === CONFIG.THIS_ACCOUNT_ORIGIN_NAME && CONFIG.EXPORT_COLOR_ID) {
+      // Exporting spoke→hub: stamp this spoke's color
+      newEvent.colorId = CONFIG.EXPORT_COLOR_ID;
+    } else if (directionSourceOrigin === 'PERSONAL_A' && !sourceEvent.colorId && CONFIG.HUB_IMPORT_COLOR_ID) {
+      // Importing a hub-native event (no color from another spoke): use hub import color
+      newEvent.colorId = CONFIG.HUB_IMPORT_COLOR_ID;
+    } else if (sourceEvent.colorId) {
+      // Importing hub→spoke: preserve the color set by the exporting spoke
+      newEvent.colorId = sourceEvent.colorId;
+    }
+
     // --- 5. UPSERT (1 read + 1 write) ---
     let existingTargetEvents;
     try {

@@ -18,7 +18,18 @@ const CONFIG = {
   // Internal tags used to prevent infinite loops and map events
   ORIGINAL_CALENDAR_ID_KEY: 'originalCalendarId',
   ORIGINAL_EVENT_ID_KEY: 'originalId',
-  COPIED_EVENT_KEY: 'IS_COPIED_EVENT'
+  COPIED_EVENT_KEY: 'IS_COPIED_EVENT',
+
+  // Color ID stamped on events exported FROM this spoke TO the hub.
+  // This color persists when other spokes import from the hub.
+  // Google Calendar color IDs: 1=Lavender, 2=Sage, 3=Grape, 4=Flamingo,
+  // 5=Banana, 6=Tangerine, 7=Peacock, 8=Graphite, 9=Blueberry, 10=Basil, 11=Tomato
+  EXPORT_COLOR_ID: '9',  // Blueberry — change per spoke deployment
+
+  // Color ID for events that originate from the hub (personal calendar) when imported to this spoke.
+  // These are the hub's own events (not forwarded from another spoke).
+  // Leave null/empty to preserve the source event's color or use no color.
+  HUB_IMPORT_COLOR_ID: '7'  // Peacock
 };
 
 /**
