@@ -1,0 +1,34 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     git-olog
+# Description: A custom Git subcommand wrapper that displays a concise, 
+#              one-line Git history log. Shows a linear log if HEAD and 
+#              main are in a direct linear lineage, but switches to a 
+#              graph layout showing commits up to the divergence point 
+#              if the history has branched.
+# Usage:       git olog
+#              git olog -10
+# ==============================================================================
+
+# Get commit hashes for HEAD, main, and their common ancestor
+HEAD_COMMIT=$(git rev-parse HEAD 2>/dev/null)
+MAIN_COMMIT=$(git rev-parse main 2>/dev/null)
+MERGE_BASE=$(git merge-base HEAD main 2>/dev/null)
+
+# Check if history is linear (merge-base equals either HEAD or main)
+if [ "\(MERGE_BASE" = "\)HEAD_COMMIT" ] || [ "\(MERGE_BASE" = "\)MAIN_COMMIT" ]; then
+    # Linear history: simple log for HEAD and main
+    if [ $# -eq 0 ]; then
+        git log --oneline HEAD main -5
+    else
+        git log --oneline HEAD main "$@"
+    fi
+else
+    # Non-linear / diverged history: render graph up to common ancestor
+    if [ $# -eq 0 ]; then
+        git log --oneline --graph --boundary HEAD...main -5
+    else
+        git log --oneline --graph --boundary HEAD...main "$@"
+    fi
+fi
+

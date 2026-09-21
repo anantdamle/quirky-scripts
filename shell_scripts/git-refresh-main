@@ -1,0 +1,36 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     git-sync-main
+# Description: Safely refreshes the local 'main' branch from any working 
+#              branch by stashing changes, checking out main, pulling the 
+#              latest updates, returning to the starting branch, and popping 
+#              the stash if one was created.
+# Usage:       git sync-main
+# ==============================================================================
+
+# Store the currently checked-out branch name
+CURRENT_BRANCH="$(git branch --show-current)"
+
+# Stash everything (including untracked files) and capture output
+STASH_OUTPUT="$(git stash push --include-untracked 2>&1)"
+
+# Check if a stash was actually created
+WAS_STASHED=0
+case "$STASH_OUTPUT" in
+  *"No local changes to save"*)
+    echo "$STASH_OUTPUT"
+    ;;
+  *)
+    echo "$STASH_OUTPUT"
+    WAS_STASHED=1
+    ;;
+esac
+
+# Update main and return to your starting branch
+git checkout main && git pull && git checkout "$CURRENT_BRANCH"
+
+# Only pop from the stash stack if changes were stashed
+if [ "$WAS_STASHED" -eq 1 ]; then
+    git stash pop
+fi
+

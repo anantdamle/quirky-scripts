@@ -1,0 +1,117 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     git-gh-sync
+# Description: Stashes uncommitted changes, switches to main and pulls latest, 
+#              deletes local branches associated with closed or merged pull 
+#              requests, optionally force-syncs all local branches ("down"), 
+#              and restores the original branch if it was not deleted.
+# Usage:       git gh-sync
+#              git gh-sync down
+# ==============================================================================
+
+set -e
+
+# Stash uncommitted changes if any exist
+STASHED=0
+if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+    echo "Stashing uncommitted changes..."
+    git stash push -m "git-gh-sync temporary stash" >/dev/null
+    STASHED=1
+fi
+
+# Store the starting branch (fallback to HEAD if detached)
+ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+
+# Determine the main/default branch
+MAIN_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+if [ -z "$MAIN_BRANCH" ]; then
+    MAIN_BRANCH="main"
+fi
+
+# Always switch to main branch before syncing
+case "$ORIGINAL_BRANCH" in
+    HEAD) ;;
+    "$MAIN_BRANCH") ;;
+    *)
+        echo "Switching to main branch '$MAIN_BRANCH'..."
+        git checkout "$MAIN_BRANCH" >/dev/null
+        ;;
+esac
+
+# Ensure cleanup restores stash and attempts to return to original branch on exit
+cleanup() {
+    case "$ORIGINAL_BRANCH" in
+        HEAD) ;;
+        "$MAIN_BRANCH") ;;
+        *)
+            if git show-ref --verify --quiet "refs/heads/$ORIGINAL_BRANCH"; then
+                echo "Returning to previous branch '$ORIGINAL_BRANCH'..."
+                git checkout "$ORIGINAL_BRANCH" >/dev/null
+            else
+                echo "Previous branch '$ORIGINAL_BRANCH' was deleted; staying on '$MAIN_BRANCH'."
+            fi
+            ;;
+    esac
+
+    if [ "$STASHED" -eq 1 ]; then
+        echo "Restoring stashed changes..."
+        git stash pop >/dev/null
+    fi
+}
+trap cleanup EXIT
+
+# Sync main branch with origin safely
+echo "Updating '$MAIN_BRANCH' from remote..."
+git pull --ff-only >/dev/null 2>&1 || git fetch origin "$MAIN_BRANCH"
+
+# Check closed PR status ONLY for existing local branches
+echo "Checking PR status for local branches..."
+
+# Iterate purely over local branch refs to guarantee clean names
+git for-each-ref refs/heads/ | while read -r HASH TYPE REF; do
+    BRANCH=$(echo "$REF" | sed 's@^refs/heads/@@')
+    [ -z "$BRANCH" ] && continue
+
+    case "$BRANCH" in
+        "$MAIN_BRANCH") continue ;;
+    esac
+
+    STATE=$(gh pr view "$BRANCH" --json state --jq '.state' 2>/dev/null || true)
+
+    case "$STATE" in
+        MERGED|CLOSED)
+            echo "Deleting local branch connected to $STATE PR:$BRANCH"
+            git branch -D "$BRANCH"
+            ;;
+    esac
+done
+
+# Optional force sync all local tracking branches to remote
+if [ "$1" = "down" ]; then
+    echo "Fetching all remotes and pruning deleted tracking branches..."
+    git fetch --all --prune >/dev/null
+
+    echo "Force syncing local branches to match remote tracking branches..."
+    git for-each-ref refs/heads/ | while read -r HASH TYPE REF; do
+        LOCAL=$(echo "$REF" | sed 's@^refs/heads/@@')
+        [ -z "$LOCAL" ] && continue
+
+        REMOTE_BRANCH=$(git config --get "branch.${LOCAL}.merge" 2>/dev/null | sed 's@refs/heads/@@' || true)
+        REMOTE_NAME=$(git config --get "branch.${LOCAL}.remote" 2>/dev/null || true)
+
+        if [ -n "$REMOTE_NAME" ] && [ -n "$REMOTE_BRANCH" ]; then
+            FULL_REMOTE="${REMOTE_NAME}/${REMOTE_BRANCH}"
+            if git show-ref --verify --quiet "refs/remotes/$FULL_REMOTE"; then
+                case "$LOCAL" in
+                    "$MAIN_BRANCH")
+                        git reset --hard "$FULL_REMOTE" >/dev/null
+                        ;;
+                    *)
+                        git branch -f "$LOCAL" "$FULL_REMOTE" >/dev/null
+                        ;;
+                esac
+                echo "Reset $LOCAL ->$FULL_REMOTE"
+            fi
+        fi
+    done
+fi
