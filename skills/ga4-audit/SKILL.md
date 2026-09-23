@@ -103,8 +103,14 @@ Run `scripts/gtm_container_audit.py` for every GTM container ID found in Phases 
 are fetched over plain HTTP from Google's public endpoint — no browser needed, and cheaper.
 
 ```bash
-python3 <SKILL_DIR>/scripts/gtm_container_audit.py GTM-XXXXXXX [GTM-YYYYYYY ...]
+python3 <SKILL_DIR>/scripts/gtm_container_audit.py GTM-XXXXXXX [GTM-YYYYYYY ...] \
+    --observed-id G-XXXXXXXXXX
 ```
+
+Pass every measurement ID the browser audit saw via `--observed-id`. The container describes how the
+ID is chosen but not which branch is live, so without this hint environment lookups often cannot be
+resolved — and unresolved IDs make the double-fire analysis provisional, since tags targeting
+different properties may be grouped together.
 
 Read `references/gtm-inspection-reference.md` for how to interpret the output — particularly
 duplicate event tags, blocking rules, and dynamic event-name macros that silently drop unmapped
@@ -201,12 +207,21 @@ Fetches public GTM containers and resolves tags against triggers.
 **Usage:** `python3 <SKILL_DIR>/scripts/gtm_container_audit.py GTM-XXXXXXX [more ...]`
 
 **Options:** `--json` for machine-readable output · `--all-tags` to include non-GA4 tags ·
-`--raw-dir DIR` to save fetched containers for manual inspection.
+`--raw-dir DIR` to save fetched containers for manual inspection · `--observed-id G-XXXXXXX`
+(repeatable) to pass measurement IDs seen on the wire.
 
-**Reports:** container version and tag counts · every GA4 event tag with its event name, paused
-state, firing triggers and blocking rules · **duplicate event names** (the double-count check) ·
-dynamic event-name macros and the mappings they contain · which standard ecommerce events are
-missing entirely.
+**Pass `--observed-id` whenever the browser audit found the measurement IDs.** Containers route the
+ID through environment lookups whose conventions differ — one site keys production explicitly and
+defaults to UAT, another lists only its non-production hostnames and lets production fall through
+to the default. Neither can be assumed, so where the container is ambiguous the script reports it
+rather than guessing, and one observed ID collapses the ambiguity. Without it you may get every tag
+unresolved, which makes the double-fire grouping provisional.
+
+**Reports:** container version and tag counts · the GA4 properties targeted, with resolved
+measurement IDs · every GA4 event tag with its event name, target property, triggering dataLayer
+events, firing triggers and blocking rules · **double-fire risk** (the double-count check) ·
+dynamic event-name macros and the mappings they contain · which standard ecommerce events have no
+tag.
 
 ### `scripts/hash_probe.py`
 

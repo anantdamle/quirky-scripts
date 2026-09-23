@@ -75,12 +75,29 @@ which is worse than missing the finding — so always resolve `vtp_measurementId
    because the live marker is often one level below the table you are reading.
 3. **When it cannot be resolved to one ID, say so.** Cross-reference against the measurement IDs
    actually observed on the wire during the browser audit: the wire tells you which property is
-   live, the container tells you the routing logic. Neither alone is sufficient.
+   live, the container tells you the routing logic. Neither alone is sufficient. Pass them via
+   `--observed-id G-XXXXXXX` — where the container is ambiguous and exactly one candidate was seen
+   live, that resolves it.
+
+Real containers use opposite conventions, which is why this cannot be guessed:
+
+| Pattern | Production branch | Default value |
+|---|---|---|
+| Explicit environment key (`prod`, or a bot-flag table keyed `human`) | the named key | UAT or bot fallback |
+| Only non-production hostnames listed (`sit`, `uat`, `qa`, `preview`) | **the default** | production |
+
+Take the default in the first case and you name UAT as production with full confidence. The script
+handles both patterns and reports anything else as ambiguous rather than picking.
 
 Also distinguish genuine duplication from tags that share an event name but are separated by other
 conditions. A container may legitimately have a dozen tags emitting one `interaction` event from a
-dozen different clicks — that is correct design, not a defect. Only flag as confirmed where the
-firing conditions are composed *solely* of the event name, so nothing separates the tags.
+dozen different clicks — correct design, not a defect. Treat as confirmed in two cases:
+
+- **Triggers conditioned only on the event name**, so nothing separates the tags.
+- **Two tags sharing a byte-identical firing rule**, however many conditions it has. This is the
+  stronger signal and catches duplicates the first test misses — for example two `page_view` tags
+  both gated on the same page-path-plus-webview condition, which fires twice on exactly the pages
+  matching it.
 
 ### Asymmetric properties are often deliberate
 

@@ -209,14 +209,30 @@ def _reachable_ids(val, macros, depth=0, seen=None):
 # "human" are as common as environment tables keyed on "prod".
 LIVE_KEYS = ("prod", "production", "live", "human", "real")
 
+# Keys that denote a NON-production environment. When every key in a lookup is one
+# of these, the default value is the production branch. This is the inverse of the
+# pattern LIVE_KEYS handles, and real containers use both: one site routes
+# prod via an explicit key with UAT as the default, another lists only its
+# non-prod hostnames and lets production fall through to the default. Neither
+# convention can be assumed, which is why unresolved cases are reported rather
+# than guessed.
+NONPROD_KEYS = ("sit", "uat", "qa", "preview", "next", "dev", "stag", "test",
+                "local", "bot", "nonprod", "non-prod", "preprod", "pre-prod",
+                "sandbox", "demo")
+
+
+def _is_nonprod_key(k):
+    return isinstance(k, str) and any(t in k.strip().lower() for t in NONPROD_KEYS)
+
 
 def _preferred_id(val, macros, depth=0, seen=None):
     """
     Follow the branch a real user on production would take.
 
-    Containers routinely nest lookups - hostname -> bot flag -> ID - so this
-    recurses through map values rather than trusting vtp_defaultValue, which is
-    usually the UAT or bot fallback. Silently taking the default is how you end up
+    Containers routinely nest lookups - hostname -> bot flag -> ID, or hostname ->
+    locale -> ID - so this recurses rather than trusting vtp_defaultValue, which
+    may be either the production value or the UAT fallback depending on the
+    container's convention. Silently taking the default is how you end up
     confidently naming the wrong property.
     """
     if depth > 8 or val is None:
@@ -241,12 +257,28 @@ def _preferred_id(val, macros, depth=0, seen=None):
         return None
 
     entries = list(_lookup_entries(m))
+
     # A key naming the live branch wins outright.
     for k, v in entries:
         if isinstance(k, str) and any(t in k.strip().lower() for t in LIVE_KEYS):
             ids = _reachable_ids(v, macros, depth + 1, seen)
             return _preferred_id(v, macros, depth + 1, seen) or (
                 next(iter(ids)) if len(ids) == 1 else None)
+
+    # Every mapped key is a non-production environment, so production falls
+    # through to the default.
+    if entries and all(_is_nonprod_key(k) for k, _v in entries):
+        dflt = m.get("vtp_defaultValue")
+        branch_ids = set()
+        for _k, v in entries:
+            branch_ids |= _reachable_ids(v, macros, depth + 1, seen)
+        dflt_ids = _reachable_ids(dflt, macros, depth + 1, seen)
+        # Only trust this when the default is genuinely distinct from the
+        # non-prod branches - otherwise the inference tells us nothing.
+        if dflt_ids and not (dflt_ids & branch_ids):
+            return _preferred_id(dflt, macros, depth + 1, seen) or (
+                next(iter(dflt_ids)) if len(dflt_ids) == 1 else None)
+
     # Otherwise recurse into the branches - the live marker is often one level down.
     found = {r for r in (_preferred_id(v, macros, depth + 1, seen) for _k, v in entries) if r}
     if len(found) == 1:
@@ -258,7 +290,7 @@ def _preferred_id(val, macros, depth=0, seen=None):
     return next(iter(branch_ids)) if len(branch_ids) == 1 else None
 
 
-def resolve_measurement_id(val, macros):
+def resolve_measurement_id(val, macros, observed=None):
     """
     Resolve a measurement-ID reference to an actual G-XXXXXXX.
 
@@ -267,8 +299,13 @@ def resolve_measurement_id(val, macros):
     to two different properties is ordinary dual-tagging. Grouping without
     resolving the ID produces confident false positives.
 
-    Returns (id_or_None, description). Ambiguity is reported rather than guessed -
-    cross-reference against the measurement IDs actually observed on the wire.
+    `observed` is the set of measurement IDs actually seen on the wire during the
+    browser audit. The wire says which property is live; the container says how
+    routing works. Neither alone is sufficient, so where the container is
+    ambiguous and exactly one candidate was observed live, that one is chosen.
+
+    Returns (id_or_None, description). Remaining ambiguity is reported, not
+    guessed.
     """
     if val is None:
         return None, "not set (inherits from the config tag)"
@@ -281,6 +318,12 @@ def resolve_measurement_id(val, macros):
     if len(ids) == 1:
         only = next(iter(ids))
         return only, only
+    if ids and observed:
+        hits = sorted(ids & set(observed))
+        if len(hits) == 1:
+            others = sorted(ids - {hits[0]})
+            return hits[0], (f"{hits[0]} (matched an observed wire ID; "
+                             f"other branches: {'|'.join(others)})")
     if ids:
         return None, "AMBIGUOUS lookup: " + "|".join(sorted(ids))
     return None, _resolve_ref(val, macros) or "unresolved"
@@ -444,7 +487,7 @@ def _mapping_lookup(js_mappings, dl_event):
 
 # ------------------------------------------------------------------- the audit
 
-def audit(container_id, data, include_all=False):
+def audit(container_id, data, include_all=False, observed_ids=None):
     res = data.get("resource", data)
     tags = res.get("tags") or []
     predicates = res.get("predicates") or []
@@ -465,6 +508,7 @@ def audit(container_id, data, include_all=False):
         "double_fire_confirmed": [],
         "double_fire_possible": [],
         "measurement_ids": {},
+        "unresolved_property_tags": [],
         "missing_ecommerce_events": [],
         "deprecated": [],
         "js_event_mappings": js_mappings,
@@ -492,9 +536,12 @@ def audit(container_id, data, include_all=False):
         raw_ev = tag.get("vtp_eventName")
         dynamic = isinstance(raw_ev, list)
         event_name = _resolve_ref(raw_ev, macros) if dynamic else raw_ev
-        mid, mid_desc = resolve_measurement_id(tag.get("vtp_measurementIdOverride"), macros)
+        mid, mid_desc = resolve_measurement_id(
+            tag.get("vtp_measurementIdOverride"), macros, observed_ids)
         if mid:
             measurement_ids[mid] = measurement_ids.get(mid, 0) + 1
+        elif "AMBIGUOUS" in (mid_desc or ""):
+            result["unresolved_property_tags"].append(i)
 
         # Which dataLayer events reach this tag, and via an unconditional rule?
         dl_events = {}
@@ -514,7 +561,8 @@ def audit(container_id, data, include_all=False):
                 # for double-counting. Unresolved IDs group under a sentinel and
                 # are flagged as needing manual confirmation.
                 emissions.setdefault(
-                    (dl, emitted, mid or "?unresolved"), []).append((i, uncond))
+                    (dl, emitted, mid or "?unresolved"), []).append(
+                        (i, uncond, tuple(trig["fire"])))
 
         result["ga4_event_tags"].append({
             "index": i,
@@ -533,10 +581,22 @@ def audit(container_id, data, include_all=False):
     for (dl, ga4, mid), entries in sorted(emissions.items()):
         if len(entries) < 2:
             continue
-        uncond = [t for t, u in entries if u]
+        uncond = [t for t, u, _f in entries if u]
+
+        # Two tags sharing a byte-identical firing rule will always fire together,
+        # however many conditions that rule has. That is a stronger signal than an
+        # unconditional trigger and catches duplicates the unconditional test misses.
+        rule_owners = {}
+        for t, _u, fires in entries:
+            for desc in fires:
+                rule_owners.setdefault(desc, set()).add(t)
+        shared = {desc: sorted(ts) for desc, ts in rule_owners.items() if len(ts) > 1}
+
         record = {"datalayer_event": dl, "ga4_event": ga4, "measurement_id": mid,
-                  "tags": [t for t, _ in entries], "unconditional_tags": uncond}
-        if len(uncond) >= 2:
+                  "tags": [t for t, _u, _f in entries],
+                  "unconditional_tags": uncond,
+                  "shared_rules": shared}
+        if len(uncond) >= 2 or shared:
             result["double_fire_confirmed"].append(record)
         else:
             result["double_fire_possible"].append(record)
@@ -572,18 +632,37 @@ def print_report(r):
             print("  Confirm which one the data export comes from before analysing")
             print("  anything - coverage frequently differs sharply between them.")
 
+    if r["unresolved_property_tags"]:
+        n = len(r["unresolved_property_tags"])
+        print(f"\n### {n} GA4 TAG(S) WITH AN UNRESOLVED PROPERTY")
+        print("Their measurement ID comes from an environment lookup with several")
+        print("possible values and no key this tool can confidently identify as the")
+        print("live branch. Conventions genuinely differ between containers - some")
+        print("route production via an explicit key and default to UAT, others list")
+        print("only non-production hostnames and let production fall through to the")
+        print("default - so guessing would be worse than reporting it.")
+        print("  Re-run with --observed-id G-XXXXXXX using the measurement IDs seen")
+        print("  on the wire during the browser audit to resolve these.")
+        print("  Until then, treat the double-fire grouping below as provisional:")
+        print("  tags targeting DIFFERENT properties may be grouped together.")
+        print(f"  tags: {r['unresolved_property_tags']}")
+
     if r["double_fire_confirmed"]:
         print("\n### DOUBLE-FIRE - CONFIRMED. Investigate first.")
         print("Two or more tags emit the same GA4 event, to the SAME property, from the")
-        print("same dataLayer push, each via a trigger conditioned only on the event")
-        print("name - so nothing separates them and both will fire. For `purchase` this")
-        print("doubles transaction counts AND revenue. Rank P0: unlike a missing event,")
-        print("which reads as an obvious zero, inflated data looks plausible and goes")
-        print("unnoticed. Cheapest confirmation: compare GA4 transactions against the")
-        print("order system - roughly 2x settles it without a test purchase.")
+        print("same dataLayer push, with nothing separating them - either their triggers")
+        print("are conditioned only on the event name, or two tags share a byte-identical")
+        print("firing rule. For `purchase` this doubles transaction counts AND revenue.")
+        print("Rank P0: unlike a missing event, which reads as an obvious zero, inflated")
+        print("data looks plausible and goes unnoticed. Cheapest confirmation: compare")
+        print("GA4 transactions against the order system - roughly 2x settles it without")
+        print("a test purchase.")
         for d in r["double_fire_confirmed"]:
+            tags = d["unconditional_tags"] or d["tags"]
             print(f"  ! {d['datalayer_event']!r} -> GA4 {d['ga4_event']!r} "
-                  f"-> {d['measurement_id']}  tags {d['unconditional_tags']}")
+                  f"-> {d['measurement_id']}  tags {tags}")
+            for desc, ts in d.get("shared_rules", {}).items():
+                print(f"      tags {ts} share an identical rule: {desc}")
 
     if r["double_fire_possible"]:
         print("\n### DOUBLE-FIRE - POSSIBLE. Verify triggers by hand.")
@@ -677,7 +756,16 @@ def main():
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--all-tags", action="store_true", help="include non-GA4 tags")
     ap.add_argument("--raw-dir", help="save fetched containers for manual inspection")
+    ap.add_argument("--observed-id", action="append", dest="observed_ids", default=[],
+                    metavar="G-XXXXXXX",
+                    help="measurement ID(s) actually seen on the wire during the browser "
+                         "audit (repeatable). Used to disambiguate environment lookups "
+                         "the container alone cannot resolve.")
     args = ap.parse_args()
+
+    bad = [x for x in args.observed_ids if not x.startswith("G-")]
+    if bad:
+        ap.error(f"--observed-id values must look like G-XXXXXXX: {bad}")
 
     results, failed = [], False
     for cid in (c.strip() for c in args.container_ids):
@@ -691,7 +779,8 @@ def main():
             print(f"ERROR: {err}", file=sys.stderr)
             failed = True
             continue
-        results.append(audit(cid, data, include_all=args.all_tags))
+        results.append(audit(cid, data, include_all=args.all_tags,
+                             observed_ids=args.observed_ids))
 
     if args.json:
         print(json.dumps(results, indent=2, default=str))
