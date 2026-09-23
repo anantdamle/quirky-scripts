@@ -113,8 +113,15 @@ resolved — and unresolved IDs make the double-fire analysis provisional, since
 different properties may be grouped together.
 
 Read `references/gtm-inspection-reference.md` for how to interpret the output — particularly
-duplicate event tags, blocking rules, and dynamic event-name macros that silently drop unmapped
-events.
+duplicate event tags, blocking rules, dynamic event-name macros that silently drop unmapped events,
+and why measurement IDs must be resolved before any duplicate is reported.
+
+**The container is the only place some identity wiring is visible.** GA4 user properties and
+parameters appear only on hits for the events their tag fires on, and `user_id` is normally set once
+on the config tag rather than per event. So a browser session that never completes a purchase cannot
+see identity wired onto the purchase tag. Run this step before concluding anything about the join
+key — on one real audit the container showed `emailHash` and a CRM ID configured as user properties
+that the wire pass had not observed at all, which changed the conclusion.
 
 **Set expectations here.** A first-party server-side GTM endpoint (`sgtm.*`, `a.*`, `metrics.*` on
 the site's own domain) serves a *proxy* of the client-side container. The **server container's own
@@ -221,7 +228,30 @@ unresolved, which makes the double-fire grouping provisional.
 measurement IDs · every GA4 event tag with its event name, target property, triggering dataLayer
 events, firing triggers and blocking rules · **double-fire risk** (the double-count check) ·
 dynamic event-name macros and the mappings they contain · which standard ecommerce events have no
-tag.
+tag · plus the targeted checks below.
+
+**Targeted checks**, each automating something first found by hand on a real audit:
+
+| Check | What it catches |
+|---|---|
+| **Identity wiring** | Whether GA4 `user_id` is configured — in the **config tag** (where it is normally set once) as well as event tags. Plus every configured user property and identity-bearing parameter. **This is the single most valuable check**: user properties only appear on hits for the events their tag fires on, so identity wired onto a `purchase` tag is invisible to any browser session that does not complete a purchase. |
+| **PII parameters** | Parameters whose *names* suggest personal data (email, phone, address, CRM/contact ID), excluding names that say hashed. Grouped by parameter set, because a shared settings variable is one decision, not one finding per tag. |
+| **Property inventory** | Every GA4 property reachable, and how each is selected. Flags locale/region splits, where a single "production" property is legitimately several. |
+| **App suppression** | GA4 events blocked for in-app/WebView traffic. Separates a container-wide exclusion from per-event suppression. Reveals that the app renders these pages, and which conversions cannot come from analytics for the app. |
+| **Ecommerce data path** | Ecommerce tags sending neither the ecommerce object nor the ecommerce parameters individually — these fire but produce events with no items or revenue. |
+| **Legacy analytics** | Universal Analytics tags *and* UA property IDs referenced anywhere. If UA IDs appear but no UA tag exists, the tag is hardcoded in the page template, so editing GTM will not remove it. |
+| **Event naming** | Whether the container listens for GA4-native ecommerce names, namespaced/legacy ones, or both — the silent failure mode when two stacks each push only one convention. |
+| **Consent configuration** | Any CMP or Consent Mode tag. Absence is a strong hint, not proof — a CMP can load outside GTM. |
+
+With two or more containers it also runs cross-container checks: ecommerce coverage per container
+(distinguishing a genuine gap from a stack-boundary artefact), event-vocabulary mismatch between
+stacks, and which properties each container feeds.
+
+**Read the reasoning in the output, not just the flags.** Several checks deliberately report
+"possible" rather than "confirmed", and say what would settle it. Two showed up as false positives
+during development — `sendEcommerceData: false` is legitimate when parameters are mapped by hand,
+and a dozen tags sharing an event name is normal design — so the script now distinguishes both
+cases. Treat anything it labels provisional as a lead to verify, not a finding to report.
 
 ### `scripts/hash_probe.py`
 
