@@ -60,6 +60,38 @@ google_tag_manager['G-XXXXXXXXXX'].dataLayer.get('user_properties')
 `undefined` for both means nothing is configured client-side, regardless of what any individual hit
 shows.
 
+### Then confirm from the container, because the wire cannot show everything
+
+Run `scripts/gtm_container_audit.py` before concluding anything about identity. Two structural
+reasons the browser pass is insufficient on its own:
+
+1. **`user_id` is normally set once on the GA4 config tag**, not per event. A container that sets it
+   there applies it to everything, and the check must look there — inspecting only event tags will
+   report no `user_id` on a site that plainly sets one.
+2. **User properties and parameters appear only on hits for the events their tag fires on.** Identity
+   wired onto a `purchase` tag is invisible to any session that does not complete a purchase — and
+   you will not be placing a test order. The container is the only practical way to see it.
+
+This has changed a conclusion in practice. On one audit the wire showed no `up.*` parameters at all,
+which read as "no user properties exist" — but the container had `emailHash`, a Salesforce contact ID
+and a CRM ID configured as user properties on the ecommerce tags, including `purchase`. The export
+therefore likely carried a usable join key that the browser pass had not seen. Conversely, on another
+site the container confirmed `user_id` was configured on the config tag, matching the `uid` observed
+on the wire.
+
+So state it precisely:
+
+| Evidence | Correct conclusion |
+|---|---|
+| No `uid` on the wire, none in the container | Not set client-side. If the export has it, it comes from server-side tagging or the Measurement Protocol — request a container export |
+| No `uid` on the wire, configured in the container | Configured but not populated on the pages visited, or sent on events not triggered. Check the export |
+| Identity in user properties, not in `user_id` | The join key may be a **user property**, not `user_id`. Query the export for it as a user-scoped field |
+
+Beware a user property whose *name* implies a person but whose value is a device identifier — one
+real container had `custom_user_id` set to the GA4 client ID with a prefix. Anyone modelling from the
+export would reasonably assume it identified a person. Always resolve what a field actually contains
+before treating it as a person key.
+
 ---
 
 ## Verifying a hashed-email join key
