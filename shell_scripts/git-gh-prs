@@ -1,0 +1,136 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     git-gh-prs
+# Description: Lists all open pull requests authored by the authenticated
+#              GitHub user across every repository, sorted by most recently
+#              updated. Shows repository, PR number, head branch, draft state,
+#              mergeability and age. When run from inside a git repository
+#              that has a GitHub remote, that repository's pull requests are
+#              listed first, under their own heading. Requires the GitHub CLI
+#              ("gh") to be installed and authenticated.
+# Usage:       git gh-prs
+#              git gh-prs review-requested   # PRs waiting on your review
+#              git gh-prs <github-login>     # PRs authored by another user
+# ==============================================================================
+
+set -e
+
+# The GitHub CLI is the only hard dependency
+if ! command -v gh >/dev/null 2>&1; then
+    echo "error: the GitHub CLI ('gh') is required but was not found in PATH." >&2
+    echo "       install it with: brew install gh" >&2
+    exit 1
+fi
+
+# Verify we have a usable authentication token before issuing any search
+if ! gh auth status >/dev/null 2>&1; then
+    echo "error: not authenticated with GitHub. Run: gh auth login" >&2
+    exit 1
+fi
+
+# Resolve the authenticated login once; GraphQL search has no "@me" shorthand
+VIEWER=$(gh api user --jq '.login')
+
+# Build the search qualifier from the (optional) first argument
+case "${1:-}" in
+    "")
+        SEARCH_FILTER="author:$VIEWER"
+        HEADING="open pull requests authored by you"
+        ;;
+    review-requested)
+        SEARCH_FILTER="review-requested:$VIEWER"
+        HEADING="open pull requests awaiting your review"
+        ;;
+    -h|--help)
+        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    *)
+        SEARCH_FILTER="author:$1"
+        HEADING="open pull requests authored by '$1'"
+        ;;
+esac
+
+# Identify the repository we were invoked from, if any. Failures are expected
+# (not a git repo, or no GitHub remote) and are treated as "no current repo".
+CURRENT_REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
+
+# One GraphQL round trip gets everything, including the head branch and
+# mergeability that the "gh search prs" endpoint does not expose.
+ROWS=$(gh api graphql \
+    -f query='
+      query($q: String!) {
+        search(query: $q, type: ISSUE, first: 100) {
+          nodes {
+            ... on PullRequest {
+              number
+              title
+              isDraft
+              updatedAt
+              headRefName
+              mergeable
+              repository { nameWithOwner }
+            }
+          }
+        }
+      }' \
+    -f q="is:pr is:open $SEARCH_FILTER sort:updated-desc" \
+    --jq '
+      def age:
+        (now - (. | fromdateiso8601)) as $s
+        | if   $s < 3600    then "\(($s / 60)      | floor)m ago"
+          elif $s < 86400   then "\(($s / 3600)    | floor)h ago"
+          elif $s < 2592000 then "\(($s / 86400)   | floor)d ago"
+          else                   "\(($s / 2592000) | floor)mo ago"
+          end;
+      def merge_state:
+        if   . == "MERGEABLE"   then "clean"
+        elif . == "CONFLICTING" then "CONFLICT"
+        else "unknown"
+        end;
+      .data.search.nodes[]
+      | [ .repository.nameWithOwner,
+          "#\(.number)",
+          .headRefName,
+          (if .isDraft then "draft" else "ready" end),
+          (.mergeable | merge_state),
+          (.updatedAt | age),
+          (.title | if length > 50 then .[0:47] + "..." else . end)
+        ]
+      | @tsv')
+
+if [ -z "$ROWS" ]; then
+    echo "No $HEADING."
+    exit 0
+fi
+
+HEADER=$(printf 'REPOSITORY\tPR\tBRANCH\tSTATE\tMERGE\tUPDATED\tTITLE')
+
+# Split the result set so the current repository is reported first. Ordering
+# within each group is preserved (most recently updated first).
+if [ -n "$CURRENT_REPO" ]; then
+    LOCAL_ROWS=$(printf '%s\n' "$ROWS" | grep -F "$CURRENT_REPO	" || true)
+    OTHER_ROWS=$(printf '%s\n' "$ROWS" | grep -Fv "$CURRENT_REPO	" || true)
+else
+    LOCAL_ROWS=""
+    OTHER_ROWS=$ROWS
+fi
+
+# Render a heading plus an aligned table, skipping empty groups
+render_group() {
+    group_heading=$1
+    group_rows=$2
+    [ -z "$group_rows" ] && return 0
+    printf '%s\n\n' "$group_heading"
+    printf '%s\n%s\n' "$HEADER" "$group_rows" | column -t -s '	'
+    printf '\n'
+}
+
+if [ -n "$LOCAL_ROWS" ]; then
+    render_group "$CURRENT_REPO — $HEADING" "$LOCAL_ROWS"
+    render_group "Other repositories — $HEADING" "$OTHER_ROWS"
+else
+    render_group "All repositories — $HEADING" "$OTHER_ROWS"
+fi
+
+printf '%s total.\n' "$(printf '%s\n' "$ROWS" | wc -l | tr -d ' ') open pull request(s)"
