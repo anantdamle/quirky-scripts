@@ -8,12 +8,28 @@
 #              that has a GitHub remote, that repository's pull requests are
 #              listed first, under their own heading. Requires the GitHub CLI
 #              ("gh") to be installed and authenticated.
-# Usage:       git gh-prs
+# Usage:       git gh-prs [-r|--remote <remote>]
+#              (<remote> picks the 'current repo' shown first; default:
+#              wt.remote, 'origin', then gh's default repo)
 #              git gh-prs review-requested   # PRs waiting on your review
 #              git gh-prs <github-login>     # PRs authored by another user
 # ==============================================================================
 
 set -e
+
+# Pull out -r/--remote <name> (anywhere in the arguments); keep the rest.
+REMOTE_ARG=""
+N=$#; I=0
+while [ "$I" -lt "$N" ]; do
+    A=$1; shift; I=$((I + 1))
+    case "$A" in
+        -r|--remote)
+            [ "$I" -lt "$N" ] || { echo "git-gh-prs: $A needs a remote name" >&2; exit 1; }
+            REMOTE_ARG=$1; shift; I=$((I + 1)) ;;
+        --remote=*) REMOTE_ARG=${A#--remote=} ;;
+        *) set -- "$@" "$A" ;;
+    esac
+done
 
 # The GitHub CLI is the only hard dependency
 if ! command -v gh >/dev/null 2>&1; then
@@ -42,7 +58,7 @@ case "${1:-}" in
         HEADING="open pull requests awaiting your review"
         ;;
     -h|--help)
-        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     *)
@@ -51,9 +67,29 @@ case "${1:-}" in
         ;;
 esac
 
+# Resolve a 'git wt clone' container before identifying the current repository.
+# Unlike sync, PR listing also works when there is no repository at all.
+if ! git rev-parse --git-dir >/dev/null 2>&1 \
+    && [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
+    cd MAIN
+fi
+
 # Identify the repository we were invoked from, if any. Failures are expected
 # (not a git repo, or no GitHub remote) and are treated as "no current repo".
-CURRENT_REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
+CURRENT_REPO=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    R="$REMOTE_ARG"
+    if [ -n "$R" ]; then
+        git remote | grep -qxF "$R" || { echo "error: no such remote '$R'" >&2; exit 1; }
+    else
+        R=$(git config --get wt.remote 2>/dev/null || true)
+        git remote | grep -qxF "${R:-origin}" && R=${R:-origin} || R=""
+    fi
+    [ -n "$R" ] && CURRENT_REPO=$(gh repo view "$(git remote get-url "$R")" --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
+elif [ -n "$REMOTE_ARG" ]; then
+    echo "error: --remote needs a git repository" >&2; exit 1
+fi
+[ -n "$CURRENT_REPO" ] || CURRENT_REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
 
 # One GraphQL round trip gets everything, including the head branch and
 # mergeability that the "gh search prs" endpoint does not expose.
