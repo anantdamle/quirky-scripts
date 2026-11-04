@@ -1,0 +1,352 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     git-wt
+# Description: Manage branches as worktrees. Each branch lives in its own
+#              folder under a shared worktree root, so switching branches is
+#              just a 'cd' and never requires stashing.
+#
+#              Worktree root defaults to '<parent>/<repo>.worktrees', next to
+#              the main checkout. Override with:
+#                git config wt.root /path/to/worktrees
+#
+# Usage:       git wt [-r|--remote <remote>] <subcommand> ...
+#                  <remote> overrides wt.remote/'origin' for new/base lookups.
+#              git wt clone [<git clone options>] <repo-url> [<name>]
+#                  Clone into '<name>/MAIN' (default name: repo name from the
+#                  URL) and set wt.root to '<name>', so later worktrees sit
+#                  beside MAIN: <name>/MAIN, <name>/feat-x, ...
+#              git wt new [--no-switch] <branch> [<base>]
+#                  Create a worktree for <branch>, then cd into it
+#                  (needs the shell hook below; --no-switch to skip):
+#                  - local branch exists          -> use it
+#                  - <remote>/<branch> exists     -> create tracking branch
+#                  - otherwise                    -> new branch off <base>
+#                                                    (default: origin's HEAD)
+#              git wt rm [-f|-D] <branch>
+#                  Remove the worktree folder and delete the local branch.
+#                  -f forces removal of a dirty worktree / unmerged branch.
+#                  -D forces only the branch delete (dirty worktrees kept).
+#              git wt ls
+#                  List worktrees.
+#              git wt path <branch>
+#                  Print the folder for <branch> (e.g. cd "$(git wt path x)").
+#              git wt switch <branch>
+#                  cd into <branch>'s folder (needs the shell hook below).
+#              git wt init
+#                  Print the shell hook. A git subcommand can't cd its caller,
+#                  so add this to ~/.zshrc or ~/.bashrc:
+#                    eval "$(git wt init)"
+# ==============================================================================
+
+set -e
+
+# Pull out -r/--remote <name> (anywhere in the arguments); keep the rest.
+REMOTE_ARG=""
+N=$#; I=0
+while [ "$I" -lt "$N" ]; do
+    A=$1; shift; I=$((I + 1))
+    case "$A" in
+        -r|--remote)
+            [ "$I" -lt "$N" ] || { echo "git-wt: $A needs a remote name" >&2; exit 1; }
+            REMOTE_ARG=$1; shift; I=$((I + 1)) ;;
+        --remote=*) REMOTE_ARG=${A#--remote=} ;;
+        *) set -- "$@" "$A" ;;
+    esac
+done
+
+# From a 'git wt clone' container folder (not itself a repo), operate on
+# ./MAIN so every subcommand works from the parent of the worktrees.
+# Table of BRANCH / COMMIT / FOLDER, folders relative to the repo root
+# (wt.root for 'git wt clone' layouts, else the main checkout's parent)
+cmd_ls() {
+    BASE=$(git config --get wt.root 2>/dev/null || dirname "$(main_worktree)")
+    git worktree list --porcelain | awk -v base="${BASE%/}/" '
+        function flush() {
+            if (wt == "") return
+            rel = (index(wt "/", base) == 1) ? substr(wt, length(base) + 1) : wt
+            if (rel == "") rel = "."
+            n++; B[n] = br; C[n] = substr(head, 1, 7); F[n] = rel
+            if (length(br) > wb) wb = length(br)
+            wt = ""; br = ""; head = ""
+        }
+        /^worktree /  { flush(); wt = substr($0, 10); br = "(detached)" }
+        /^HEAD /      { head = substr($0, 6) }
+        /^branch /    { br = substr($0, 8); sub(/^refs\/heads\//, "", br) }
+        /^bare$/      { br = "(bare)" }
+        END {
+            flush()
+            if (wb < 6) wb = 6
+            printf "%-" wb "s  %-7s  %s\n", "BRANCH", "COMMIT", "FOLDER"
+            for (i = 1; i <= n; i++) printf "%-" wb "s  %-7s  %s\n", B[i], C[i], F[i]
+        }'
+}
+
+case "$1" in
+    clone|init|help|-h|--help|"") ;;
+    *)
+        if ! git rev-parse --git-dir >/dev/null 2>&1 \
+            && [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
+            cd MAIN
+        fi
+        ;;
+esac
+
+# Remote to use, in order: -r/--remote, wt.remote (set by 'git wt clone'), 'origin',
+# the remote the current branch tracks, then the first configured remote.
+resolve_remote() {
+    git rev-parse --git-dir >/dev/null 2>&1 || { echo "${REMOTE_ARG:-origin}"; return; }
+    if [ -n "$REMOTE_ARG" ]; then
+        git remote | grep -qxF "$REMOTE_ARG" || { echo "git-wt: no such remote '$REMOTE_ARG'" >&2; exit 1; }
+        echo "$REMOTE_ARG"; return
+    fi
+    R=$(git config --get wt.remote 2>/dev/null || true)
+    if [ -n "$R" ] && git remote | grep -qxF "$R"; then echo "$R"; return; fi
+    if git remote | grep -qx origin; then echo origin; return; fi
+    R=$(git config --get "branch.$(git branch --show-current 2>/dev/null).remote" 2>/dev/null || true)
+    if [ -n "$R" ] && git remote | grep -qxF "$R"; then echo "$R"; return; fi
+    R=$(git remote | head -n 1)
+    echo "${R:-origin}"
+}
+REMOTE=$(resolve_remote) || exit 1
+
+die() {
+    echo "git-wt: $*" >&2
+    exit 1
+}
+
+usage() {
+    sed -n '/^# Usage:/,/^# =====/p' "$0" | sed '$d; s/^# \{0,1\}//'
+    exit "${1:-0}"
+}
+
+# Top-level of the main (first) worktree, regardless of which worktree we're in
+main_worktree() {
+    git worktree list --porcelain | sed -n '1s/^worktree //p'
+}
+
+worktree_root() {
+    ROOT=$(git config --get wt.root 2>/dev/null || true)
+    if [ -z "$ROOT" ]; then
+        MAIN=$(main_worktree)
+        ROOT="$(dirname "$MAIN")/$(basename "$MAIN").worktrees"
+    fi
+    echo "$ROOT"
+}
+
+# Folder for a branch; slashes become dashes to keep the root flat
+branch_path() {
+    echo "$(worktree_root)/$(echo "$1" | tr '/' '-')"
+}
+
+# Existing worktree folder that has <branch> checked out (empty if none)
+worktree_for_branch() {
+    git worktree list --porcelain | awk -v ref="refs/heads/$1" '
+        /^worktree / { wt = substr($0, 10) }
+        $0 == "branch " ref { print wt; exit }'
+}
+
+default_base() {
+    BASE=$(git symbolic-ref "refs/remotes/$REMOTE/HEAD" 2>/dev/null | sed 's@^refs/remotes/@@')
+    echo "${BASE:-$REMOTE/main}"
+}
+
+cmd_clone() {
+    # Split args into clone options (passed through) and positionals
+    URL=""
+    NAME=""
+    OPTS_FILE=$(mktemp)
+    trap 'rm -f "$OPTS_FILE"' EXIT
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --) shift; break ;;
+            -o|-b|-u|-c|-j|--origin|--branch|--upload-pack|--config|--jobs|\
+            --depth|--shallow-since|--shallow-exclude|--reference|\
+            --reference-if-able|--separate-git-dir|--template|--filter|\
+            --server-option|--bundle-uri|--ref-format|--revision)
+                [ $# -ge 2 ] || die "option '$1' requires a value"
+                printf '%s\n%s\n' "$1" "$2" >>"$OPTS_FILE"
+                shift 2
+                continue
+                ;;
+            -*) printf '%s\n' "$1" >>"$OPTS_FILE" ;;
+            *)
+                if [ -z "$URL" ]; then URL="$1"
+                elif [ -z "$NAME" ]; then NAME="$1"
+                else die "unexpected argument '$1'"
+                fi
+                ;;
+        esac
+        shift
+    done
+    # Positionals after '--'
+    [ -z "$URL" ] && [ $# -gt 0 ] && { URL="$1"; shift; }
+    [ -z "$NAME" ] && [ $# -gt 0 ] && { NAME="$1"; shift; }
+    [ $# -eq 0 ] || die "unexpected argument '$1'"
+    [ -n "$URL" ] || die "missing repository URL"
+
+    if [ -z "$NAME" ]; then
+        # Same rule as git: last path component, minus trailing '/' and '.git'
+        NAME=$(echo "$URL" | sed -e 's@/*$@@' -e 's@\.git$@@' -e 's@.*[/:]@@')
+    fi
+    [ -n "$NAME" ] || die "could not derive a folder name from '$URL'"
+    [ -e "$NAME" ] && die "path already exists: $NAME"
+
+    # Rebuild clone options as positional params (newline-safe enough for flags)
+    set --
+    while IFS= read -r OPT; do set -- "$@" "$OPT"; done <"$OPTS_FILE"
+
+    mkdir -p "$NAME"
+    if ! git clone "$@" -- "$URL" "$NAME/MAIN"; then
+        rmdir "$NAME" 2>/dev/null || true
+        exit 1
+    fi
+    ROOT=$(cd "$NAME" && pwd -P)
+    git -C "$NAME/MAIN" config wt.root "$ROOT"
+    # Record the remote clone created (honours -o/--origin)
+    CLONE_REMOTE=$(git -C "$NAME/MAIN" remote | head -n 1)
+    [ -n "$CLONE_REMOTE" ] && git -C "$NAME/MAIN" config wt.remote "$CLONE_REMOTE"
+
+    echo "Cloned into: $ROOT/MAIN (branch: $(git -C "$NAME/MAIN" branch --show-current))"
+    echo "New worktrees will be created under: $ROOT"
+}
+
+# Hand the target folder to the shell hook (see 'git wt init'), which cds
+# the calling shell after we exit. Without the hook, just print it.
+enter_worktree() {
+    if [ -n "$GIT_WT_CD_FILE" ]; then
+        printf '%s\n' "$1" >"$GIT_WT_CD_FILE"
+    else
+        echo "$1"
+        echo "git-wt: add 'eval \"\$(git wt init)\"' to your shell rc to cd automatically" >&2
+    fi
+}
+
+cmd_init() {
+    cat <<'EOF'
+git() {
+    if [ "$1" = wt ]; then
+        case "$2" in
+            switch|sw|cd|new|add|create)
+                _git_wt_f=$(mktemp) || return
+                GIT_WT_CD_FILE="$_git_wt_f" command git "$@"
+                _git_wt_rc=$?
+                _git_wt_d=$(cat "$_git_wt_f" 2>/dev/null)
+                rm -f "$_git_wt_f"
+                if [ "$_git_wt_rc" -eq 0 ] && [ -n "$_git_wt_d" ]; then
+                    cd "$_git_wt_d" || return
+                fi
+                return "$_git_wt_rc"
+                ;;
+        esac
+    fi
+    command git "$@"
+}
+EOF
+}
+
+cmd_new() {
+    SWITCH=1
+    if [ "$1" = "--no-switch" ]; then
+        SWITCH=""
+        shift
+    fi
+    # Only switch when the shell hook is active; otherwise "ready" says it all
+    [ -n "$GIT_WT_CD_FILE" ] || SWITCH=""
+    BRANCH="$1"
+    BASE="$2"
+    [ -n "$BRANCH" ] || usage 1
+    git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "invalid branch name '$BRANCH'"
+
+    EXISTING=$(worktree_for_branch "$BRANCH")
+    if [ -n "$EXISTING" ]; then
+        echo "Branch '$BRANCH' already checked out at: $EXISTING"
+        [ -n "$SWITCH" ] && enter_worktree "$EXISTING"
+        exit 0
+    fi
+
+    WT_PATH=$(branch_path "$BRANCH")
+    [ -e "$WT_PATH" ] && die "path already exists: $WT_PATH"
+    mkdir -p "$(dirname "$WT_PATH")"
+
+    echo "Fetching from '$REMOTE'..."
+    git fetch "$REMOTE" --prune >/dev/null 2>&1 || echo "Warning: fetch failed; using local refs." >&2
+
+    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        echo "Using existing local branch '$BRANCH'"
+        git worktree add "$WT_PATH" "$BRANCH"
+    elif git show-ref --verify --quiet "refs/remotes/$REMOTE/$BRANCH"; then
+        [ -n "$BASE" ] && echo "Ignoring base '$BASE': '$REMOTE/$BRANCH' exists on remote" >&2
+        echo "Creating local branch '$BRANCH' tracking '$REMOTE/$BRANCH'"
+        git worktree add --track -b "$BRANCH" "$WT_PATH" "$REMOTE/$BRANCH"
+    else
+        BASE="${BASE:-$(default_base)}"
+        git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || die "base '$BASE' not found"
+        echo "Creating new branch '$BRANCH' from '$BASE'"
+        git worktree add --no-track -b "$BRANCH" "$WT_PATH" "$BASE"
+    fi
+
+    echo "Worktree ready: $WT_PATH"
+    [ -n "$SWITCH" ] && enter_worktree "$WT_PATH"
+    return 0
+}
+
+cmd_rm() {
+    # -f: force both worktree and branch removal; -D: force branch only
+    FORCE_WT=""
+    FORCE_BR=""
+    case "$1" in
+        -f|--force) FORCE_WT=1; FORCE_BR=1; shift ;;
+        -D) FORCE_BR=1; shift ;;
+    esac
+    BRANCH="$1"
+    [ -n "$BRANCH" ] || usage 1
+
+    WT_PATH=$(worktree_for_branch "$BRANCH")
+    if [ -n "$WT_PATH" ]; then
+        [ "$WT_PATH" = "$(main_worktree)" ] && die "refusing to remove the main worktree"
+        case "$(pwd -P)/" in
+            "$WT_PATH"/*) die "you are inside '$WT_PATH'; cd out of it first" ;;
+        esac
+        echo "Removing worktree: $WT_PATH"
+        if [ -n "$FORCE_WT" ]; then
+            git worktree remove --force "$WT_PATH"
+        else
+            git worktree remove "$WT_PATH" || die "worktree is dirty; commit/stash or use -f"
+        fi
+    else
+        echo "No worktree found for '$BRANCH'"
+    fi
+    git worktree prune
+
+    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        if [ -n "$FORCE_BR" ]; then
+            git branch -D "$BRANCH"
+        else
+            git branch -d "$BRANCH" || die "branch not fully merged; use -f to delete anyway"
+        fi
+    else
+        echo "No local branch '$BRANCH'"
+    fi
+}
+
+case "$1" in
+    clone) shift; cmd_clone "$@" ;;
+    init) cmd_init ;;
+    new|add|create) shift; cmd_new "$@" ;;
+    rm|remove|delete|del) shift; cmd_rm "$@" ;;
+    ls|list) cmd_ls ;;
+    path)
+        [ -n "$2" ] || usage 1
+        P=$(worktree_for_branch "$2")
+        [ -n "$P" ] || die "no worktree for '$2'"
+        echo "$P"
+        ;;
+    switch|sw|cd)
+        [ -n "$2" ] || usage 1
+        P=$(worktree_for_branch "$2")
+        [ -n "$P" ] || die "no worktree for '$2' (create it with: git wt new $2)"
+        enter_worktree "$P"
+        ;;
+    -h|--help|help|"") usage 0 ;;
+    *) echo "git-wt: unknown subcommand '$1'" >&2; usage 1 ;;
+esac
