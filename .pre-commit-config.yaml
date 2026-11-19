@@ -1,0 +1,98 @@
+# Style checks based on the Google style guides
+# (https://google.github.io/styleguide/). Run via scripts/style-check.
+#
+# Commit-stage hooks only check; the "manual" stage holds the rewriting
+# formatters used by 'scripts/style-check --fix'. super-linter runs on push.
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  # Shell: https://google.github.io/styleguide/shellguide.html
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        stages: [pre-commit]
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.14.1-1
+    hooks:
+      - id: shfmt
+        alias: shfmt-check
+        name: shfmt (check)
+        args: [--diff]
+        stages: [pre-commit]
+      - id: shfmt
+        alias: shfmt-fix
+        name: shfmt (fix)
+        args: [--write]
+        stages: [manual]
+
+  # Python: https://google.github.io/styleguide/pyguide.html
+  - repo: https://github.com/google/pyink
+    rev: 26.5.1
+    hooks:
+      - id: pyink
+        alias: pyink-check
+        name: pyink (check)
+        args: [--check, --diff]
+        stages: [pre-commit]
+      - id: pyink
+        alias: pyink-fix
+        name: pyink (fix)
+        stages: [manual]
+  - repo: local
+    hooks:
+      - id: pylint
+        name: pylint (Google pylintrc)
+        entry: pylint --rcfile=pylintrc
+        language: python
+        # pylint and Python match super-linter v9.0.0 so both report the same
+        # findings (Python 3.12+ tokenizes f-string quotes differently).
+        additional_dependencies: [pylint==4.0.8]
+        language_version: python3.14
+        types: [python]
+        stages: [pre-commit]
+
+  # JavaScript / Apps Script: https://google.github.io/styleguide/jsguide.html
+  - repo: local
+    hooks:
+      - id: clang-format-check
+        name: clang-format (check)
+        entry: sh scripts/clang-format-js
+        language: python
+        additional_dependencies: [clang-format==23.1.5]
+        files: \.(js|gs)$
+        stages: [pre-commit]
+      - id: clang-format-fix
+        name: clang-format (fix)
+        entry: sh scripts/clang-format-js --fix
+        language: python
+        additional_dependencies: [clang-format==23.1.5]
+        files: \.(js|gs)$
+        stages: [manual]
+
+  # Markdown: https://google.github.io/styleguide/docguide/style.html
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.24.0
+    hooks:
+      - id: markdownlint-cli2
+        stages: [pre-commit]
+
+  # All files
+  - repo: local
+    hooks:
+      - id: trailing-whitespace
+        name: no trailing whitespace
+        entry: '[ \t]+$'
+        language: pygrep
+        stages: [pre-commit]
+
+  # On push: super-linter in a container, with the same settings as CI.
+  - repo: local
+    hooks:
+      - id: super-linter
+        name: super-linter (container)
+        entry: sh scripts/super-lint
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

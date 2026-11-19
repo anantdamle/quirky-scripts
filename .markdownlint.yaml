@@ -1,0 +1,12 @@
+# Rules from the Google Markdown style guide
+# (https://google.github.io/styleguide/docguide/style.html). Read by both the
+# markdownlint pre-commit hook and super-linter.
+MD003: {style: atx}            # ATX (#) headings
+MD004: {style: dash}           # '-' for unordered lists
+MD007: {indent: 4}             # 4-space nested list indent
+MD013:                         # 80-character lines, except code and tables
+  line_length: 80
+  code_blocks: false
+  tables: false
+MD029: {style: one}            # lazy numbering: "1." for every item
+MD046: {style: fenced}         # fenced code blocks

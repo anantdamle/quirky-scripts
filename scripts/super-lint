@@ -1,0 +1,76 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     super-lint
+# Description: Runs super-linter (https://github.com/super-linter/super-linter)
+#              locally in a container, with the same settings as the GitHub
+#              Actions lint workflow (.github/super-linter.env). Used by the
+#              pre-push hook in .pre-commit-config.yaml.
+# Usage:       scripts/super-lint [--all]
+#              By default only files changed relative to 'main' are linted;
+#              --all lints the whole repository.
+#              Needs docker or podman with a running engine. The image is
+#              amd64-only, so it runs under emulation on Apple Silicon; the
+#              explicit SHELL settings work around super-linter issue #5339
+#              (GNU parallel failing with "BuildFileArrays: not found").
+# ==============================================================================
+
+set -e
+
+# Keep in step with the version in .github/workflows/lint.yml.
+IMAGE=ghcr.io/super-linter/super-linter:slim-v9.0.0
+
+die() {
+  echo "super-lint: $*" >&2
+  exit 1
+}
+
+ALL=false
+case "$1" in
+  -h | --help)
+    sed -n 's/^# \{0,1\}//; /^Usage:/,/^=/p' "$0" | sed '$d'
+    exit 0
+    ;;
+  --all) ALL=true ;;
+  "") ;;
+  *) die "unknown option '$1' (see --help)" ;;
+esac
+
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  die "not inside a git repository"
+
+# Use the first container engine that is actually running.
+RUNTIME=""
+FOUND=""
+for CANDIDATE in docker podman; do
+  command -v "$CANDIDATE" >/dev/null 2>&1 || continue
+  FOUND="$FOUND $CANDIDATE"
+  if "$CANDIDATE" info >/dev/null 2>&1; then
+    RUNTIME=$CANDIDATE
+    break
+  fi
+done
+[ -n "$FOUND" ] || die "docker or podman is required"
+[ -n "$RUNTIME" ] ||
+  die "no running container engine (tried:$FOUND); start Docker Desktop or run 'podman machine start'"
+
+# Gitleaks (Go) crashes in the Go runtime under amd64 emulation on ARM hosts,
+# so drop it from the settings locally there; the CI workflow still runs it.
+# (super-linter rejects mixing VALIDATE_*=true with VALIDATE_*=false.)
+ENV_FILE=$(mktemp)
+trap 'rm -f "$ENV_FILE"' EXIT
+case "$(uname -m)" in
+  arm64 | aarch64)
+    echo "super-lint: warning: skipping gitleaks under amd64 emulation (CI still runs it)" >&2
+    grep -v '^VALIDATE_GITLEAKS=' .github/super-linter.env >"$ENV_FILE"
+    ;;
+  *) cp .github/super-linter.env "$ENV_FILE" ;;
+esac
+
+"$RUNTIME" run --rm --platform linux/amd64 \
+  -e RUN_LOCAL=true \
+  -e VALIDATE_ALL_CODEBASE="$ALL" \
+  -e SHELL=/bin/bash \
+  -e PARALLEL_SHELL=/bin/bash \
+  --env-file "$ENV_FILE" \
+  -v "$(pwd)":/tmp/lint \
+  "$IMAGE"

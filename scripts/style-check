@@ -1,0 +1,63 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     style-check
+# Description: Checks the repository against the Google style guides
+#              (https://google.github.io/styleguide/) using the hooks in
+#              .pre-commit-config.yaml:
+#                Shell       shellcheck, shfmt (2-space indent)
+#                Python      pyink, pylint with Google's pylintrc
+#                JS / .gs    clang-format (Google style)
+#                Markdown    markdownlint (Google Markdown guide rules)
+#              Tools are installed and cached by pre-commit on first run.
+#              On push, scripts/super-lint also runs super-linter with the
+#              same rule files (as does the GitHub Actions lint workflow).
+# Usage:       scripts/style-check [--fix] [<file>...]
+#              scripts/style-check --install
+#              Without files, checks the whole repository.
+#              --fix      rewrite files with the formatters, then check
+#              --install  run the checks on every git commit and push
+# ==============================================================================
+
+set -e
+
+usage() { sed -n 's/^# \{0,1\}//; /^Usage:/,/^=/p' "$0" | sed '$d'; }
+
+die() {
+  echo "style-check: $*" >&2
+  exit 1
+}
+
+command -v pre-commit >/dev/null 2>&1 ||
+  die "pre-commit is not installed (pip install pre-commit or brew install pre-commit)"
+
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" ||
+  die "not inside a git repository"
+[ -f .pre-commit-config.yaml ] || die "no .pre-commit-config.yaml at $(pwd)"
+
+FIX=0
+case "$1" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --install) exec pre-commit install ;;
+  --fix)
+    FIX=1
+    shift
+    ;;
+  -*) die "unknown option '$1' (see --help)" ;;
+esac
+
+if [ $# -eq 0 ]; then
+  set -- --all-files
+else
+  set -- --files "$@"
+fi
+
+if [ "$FIX" -eq 1 ]; then
+  # Formatters report "files were modified" as a failure; the check below
+  # decides the exit status.
+  pre-commit run --hook-stage manual "$@" || true
+fi
+
+pre-commit run --show-diff-on-failure "$@"

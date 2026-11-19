@@ -1,0 +1,36 @@
+#!/bin/sh
+# ==============================================================================
+# Command:     clang-format-js
+# Description: Runs clang-format in Google JavaScript style on the given files,
+#              treating them as JavaScript regardless of extension (clang-format
+#              would otherwise parse Apps Script .gs files as C++). Used by the
+#              clang-format hooks in .pre-commit-config.yaml.
+# Usage:       scripts/clang-format-js [--fix] <file>...
+#              Without --fix, prints a diff and fails if a file needs changes.
+# ==============================================================================
+
+FIX=0
+if [ "$1" = "--fix" ]; then
+  FIX=1
+  shift
+fi
+
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+
+STATUS=0
+for FILE in "$@"; do
+  if ! clang-format --style=file --assume-filename="$FILE.js" <"$FILE" >"$TMP"; then
+    echo "clang-format-js: failed to format $FILE" >&2
+    STATUS=1
+    continue
+  fi
+  cmp -s "$FILE" "$TMP" && continue
+  if [ "$FIX" -eq 1 ]; then
+    cat "$TMP" >"$FILE"
+  else
+    diff -u "$FILE" "$TMP" | sed "2s|$TMP|$FILE (Google style)|"
+    STATUS=1
+  fi
+done
+exit "$STATUS"
