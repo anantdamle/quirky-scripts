@@ -1,10 +1,10 @@
 #!/bin/sh
 # ==============================================================================
 # Command:     git-olog
-# Description: A custom Git subcommand wrapper that displays a concise, 
-#              one-line Git history log. Shows a linear log if HEAD and 
-#              main are in a direct linear lineage, but switches to a 
-#              graph layout showing commits up to the divergence point 
+# Description: A custom Git subcommand wrapper that displays a concise,
+#              one-line Git history log. Shows a linear log if HEAD and
+#              main are in a direct linear lineage, but switches to a
+#              graph layout showing commits up to the divergence point
 #              if the history has branched.
 # Usage:       git olog [-r|--remote <remote>] [<git log options>]
 #              git olog -10
@@ -14,33 +14,45 @@
 
 # Pull out -r/--remote <name> (anywhere in the arguments); keep the rest.
 REMOTE_ARG=""
-N=$#; I=0
+N=$#
+I=0
 while [ "$I" -lt "$N" ]; do
-    A=$1; shift; I=$((I + 1))
-    case "$A" in
-        -r|--remote)
-            [ "$I" -lt "$N" ] || { echo "git-olog: $A needs a remote name" >&2; exit 1; }
-            REMOTE_ARG=$1; shift; I=$((I + 1)) ;;
-        --remote=*) REMOTE_ARG=${A#--remote=} ;;
-        *) set -- "$@" "$A" ;;
-    esac
+  A=$1
+  shift
+  I=$((I + 1))
+  case "$A" in
+    -r | --remote)
+      [ "$I" -lt "$N" ] || {
+        echo "git-olog: $A needs a remote name" >&2
+        exit 1
+      }
+      REMOTE_ARG=$1
+      shift
+      I=$((I + 1))
+      ;;
+    --remote=*) REMOTE_ARG=${A#--remote=} ;;
+    *) set -- "$@" "$A" ;;
+  esac
 done
 
 # Resolve a 'git wt clone' container before reading any repository metadata.
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
-    if [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
-        cd MAIN || exit 1
-    else
-        echo "git-olog: not a git repository or a worktree container with a MAIN checkout" >&2
-        exit 1
-    fi
+  if [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
+    cd MAIN || exit 1
+  else
+    echo "git-olog: not a git repository or a worktree container with a MAIN checkout" >&2
+    exit 1
+  fi
 fi
 
 MAIN=main
 if [ -n "$REMOTE_ARG" ]; then
-    git remote | grep -qxF "$REMOTE_ARG" || { echo "git-olog: no such remote '$REMOTE_ARG'" >&2; exit 1; }
-    MAIN=$(git symbolic-ref "refs/remotes/$REMOTE_ARG/HEAD" 2>/dev/null | sed 's@^refs/remotes/@@')
-    MAIN=${MAIN:-$REMOTE_ARG/main}
+  git remote | grep -qxF "$REMOTE_ARG" || {
+    echo "git-olog: no such remote '$REMOTE_ARG'" >&2
+    exit 1
+  }
+  MAIN=$(git symbolic-ref "refs/remotes/$REMOTE_ARG/HEAD" 2>/dev/null | sed 's@^refs/remotes/@@')
+  MAIN=${MAIN:-$REMOTE_ARG/main}
 fi
 
 # Get commit hashes for HEAD, main, and their common ancestor
@@ -50,18 +62,17 @@ MERGE_BASE=$(git merge-base HEAD "$MAIN" 2>/dev/null)
 
 # Check if history is linear (merge-base equals either HEAD or main)
 if [ -n "$MERGE_BASE" ] && { [ "$MERGE_BASE" = "$HEAD_COMMIT" ] || [ "$MERGE_BASE" = "$MAIN_COMMIT" ]; }; then
-    # Linear history: simple log for HEAD and main
-    if [ $# -eq 0 ]; then
-        git log --oneline HEAD "$MAIN" -5
-    else
-        git log --oneline HEAD "$MAIN" "$@"
-    fi
+  # Linear history: simple log for HEAD and main
+  if [ $# -eq 0 ]; then
+    git log --oneline HEAD "$MAIN" -5
+  else
+    git log --oneline HEAD "$MAIN" "$@"
+  fi
 else
-    # Non-linear / diverged history: render graph up to common ancestor
-    if [ $# -eq 0 ]; then
-        git log --oneline --graph --boundary "HEAD...$MAIN" -5
-    else
-        git log --oneline --graph --boundary "HEAD...$MAIN" "$@"
-    fi
+  # Non-linear / diverged history: render graph up to common ancestor
+  if [ $# -eq 0 ]; then
+    git log --oneline --graph --boundary "HEAD...$MAIN" -5
+  else
+    git log --oneline --graph --boundary "HEAD...$MAIN" "$@"
+  fi
 fi
-
