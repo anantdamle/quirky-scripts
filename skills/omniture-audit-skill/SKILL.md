@@ -33,7 +33,7 @@ tags hidden in custom code).
 Non-negotiable — the audit runs against **live production** on a site the user usually does not own.
 
 | Rule | Reason |
-|---|---|
+| --- | --- |
 | **Never place an order or submit payment.** Stop before any irreversible confirmation. | Real money, real fulfilment. |
 | **Never enter personal data** — no addresses, phones, cards. | PII handling; mutating the account. |
 | **Never change account settings** or sign the user out. | Destructive, hard to reverse. |
@@ -52,10 +52,11 @@ identity phase. Note whose account they belong to.
 ### Phase 1 — Gather target and confirm scope
 
 Use `ask_user_question`:
+
 1. **Site URL** (text, default `https://www.example.com`).
-2. **Will you log in for the signed-in phase?** Yes / No — anonymous-only is valid but cannot
+1. **Will you log in for the signed-in phase?** Yes / No — anonymous-only is valid but cannot
    assess customer-ID sync or the join key.
-3. **Known context (optional):** report suite IDs, datastream ID, or whether a Web SDK
+1. **Known context (optional):** report suite IDs, datastream ID, or whether a Web SDK
    migration is underway — speeds up reconciliation.
 
 **⚠️ STOP**: Do not open a browser until the URL is confirmed.
@@ -139,7 +140,7 @@ Build from `references/report-template.md`. Produce the full document **and** an
 ## Severity rubric
 
 | | Criteria |
-|---|---|
+| --- | --- |
 | **P0** | Blocks an attribution or measurement build · corrupts revenue/conversion/page-view data · privacy/compliance exposure |
 | **P1** | Materially distorts attribution, visitor counts or channel reporting |
 | **P2** | Degrades data quality, or wastes spend (incl. billed secondary server calls) |
@@ -174,7 +175,7 @@ architect for XDM/datastreams, legal/privacy).
 ## Tools
 
 | Script | Purpose |
-|---|---|
+| --- | --- |
 | `scripts/adobe_beacon_decoder.py` | Decode AppMeasurement, Web SDK, Target and AAM requests from a URL list or HAR. `--json`, `--include-unknown`. |
 | `scripts/tms_library_audit.py` | Parse public Launch / DTM / Tealium libraries: rules, data elements, extensions, report suites, load rules, vendor tags, flags. `--json`, `--raw-dir`, `--fetch-custom`, `--no-fetch-tags`. |
 | `scripts/gtm_container_audit.py` | Public GTM container parser (from ga4-audit). Use `--all-tags --raw-dir` and grep the raw container for `AppMeasurement`/`alloy` when Adobe is deployed via GTM custom HTML/templates. |
@@ -200,6 +201,6 @@ the TMS UI, not a finding.
 1. **Remediation document** at the chosen path — scope/method, executive summary, severity-ranked
    findings with evidence/impact/fix/owner, variable map, identity reference, what works, tagging
    architecture, third-party inventory, pending verification, recommended sequence.
-2. **Executive brief** — closing section and printed in chat.
-3. **Session state disclosure** — cart items, beacons emitted by the audit (e.g. login events),
+1. **Executive brief** — closing section and printed in chat.
+1. **Session state disclosure** — cart items, beacons emitted by the audit (e.g. login events),
    so the client can filter audit artefacts from real behaviour.

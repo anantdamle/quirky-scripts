@@ -5,7 +5,7 @@ Glossary for reading decoded hits. `adobe_beacon_decoder.py` names most of these
 ## AppMeasurement (`/b/ss/<rsid[,rsid2]>/<1|0>/<lib>/s<random>`)
 
 | Param | Meaning | Audit note |
-|---|---|---|
+| --- | --- | --- |
 | path rsids | Report suite(s) | >1 = multi-suite tagging; each extra suite is a billed secondary server call |
 | `pageName` / `gn` | Page name | Missing → reports fall back to URL |
 | `g`, `r` | Page URL, referrer | Scan for PII in query strings |

@@ -12,7 +12,7 @@ for an Adobe implementation. All three libraries are public because the browser 
 `_satellite.buildInfo` for build date and environment.
 
 | Output | How to read it |
-|---|---|
+| --- | --- |
 | `build.environment` ≠ production on the live site | Dev/staging library on prod — P1; unreviewed changes are live |
 | Extensions list | Which Adobe stacks are installed: `adobe-analytics` (AppMeasurement), `adobe-alloy` (Web SDK), `adobe-mcid` (Visitor API), `adobe-target`/`-v2`, `adobe-audience-manager`. Third-party extensions show governed vendors. |
 | `report_suites` | Per-environment report suites from the AA extension. `%Data Element%` values mean the suite is chosen at runtime — reconcile against the beacon path. |
@@ -46,7 +46,7 @@ rules map to the same overlap and leakage checks.
 encodes the publish timestamp. `utag.sync.js` loads synchronously in `<head>` — check what it carries.
 
 | Output | How to read it |
-|---|---|
+| --- | --- |
 | Tags with `load_rule_text` | Each tag's load/send expressions resolved to `utag.cond[N]` load rules. |
 | `all_pages` | No load rule — tag loads everywhere, including pages where it may not have consent or purpose. |
 | `DISABLED` (`load:0`) | Present but not loading — candidate for removal. |

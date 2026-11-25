@@ -39,35 +39,81 @@ PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d[\d\s\-()]{8,}\d)(?!\d)")
 HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 
 AA_NAMED = {
-    "pageName": "pageName", "gn": "pageName", "g": "page URL", "r": "referrer",
-    "ch": "channel", "server": "server", "events": "events",
-    "products": "products", "purchaseID": "purchaseID", "pi": "purchaseID",
-    "xact": "transactionID", "cc": "currencyCode", "state": "state",
-    "zip": "zip", "c3": "prop3", "v0": "campaign (v0)", "pe": "link type",
-    "pev1": "link URL", "pev2": "link name", "pev3": "video/milestone",
-    "mid": "ECID (mid)", "aid": "legacy visitor ID (aid / s_vi)",
-    "vid": "custom visitorID", "fid": "fallback visitor ID (s_fid)",
-    "mcorgid": "Experience Cloud Org ID", "aamb": "AAM blob",
-    "aamlh": "AAM location hint", "mcaid": "MCAID", "cdp": "cookie domain periods",
-    "ce": "character set", "ns": "namespace", "t": "timestamp", "ts": "timestamp",
-    "bh": "browser height", "bw": "browser width", "s": "screen", "c": "color",
-    "j": "JS version", "v": "Java enabled", "k": "cookies", "AQB": "",
-    "AQE": "", "ndh": "", "pf": "", "sdid": "supplemental data ID (A4T)",
-    "lrt": "link response time", "cl": "cookie lifetime",
+    "pageName": "pageName",
+    "gn": "pageName",
+    "g": "page URL",
+    "r": "referrer",
+    "ch": "channel",
+    "server": "server",
+    "events": "events",
+    "products": "products",
+    "purchaseID": "purchaseID",
+    "pi": "purchaseID",
+    "xact": "transactionID",
+    "cc": "currencyCode",
+    "state": "state",
+    "zip": "zip",
+    "c3": "prop3",
+    "v0": "campaign (v0)",
+    "pe": "link type",
+    "pev1": "link URL",
+    "pev2": "link name",
+    "pev3": "video/milestone",
+    "mid": "ECID (mid)",
+    "aid": "legacy visitor ID (aid / s_vi)",
+    "vid": "custom visitorID",
+    "fid": "fallback visitor ID (s_fid)",
+    "mcorgid": "Experience Cloud Org ID",
+    "aamb": "AAM blob",
+    "aamlh": "AAM location hint",
+    "mcaid": "MCAID",
+    "cdp": "cookie domain periods",
+    "ce": "character set",
+    "ns": "namespace",
+    "t": "timestamp",
+    "ts": "timestamp",
+    "bh": "browser height",
+    "bw": "browser width",
+    "s": "screen",
+    "c": "color",
+    "j": "JS version",
+    "v": "Java enabled",
+    "k": "cookies",
+    "AQB": "",
+    "AQE": "",
+    "ndh": "",
+    "pf": "",
+    "sdid": "supplemental data ID (A4T)",
+    "lrt": "link response time",
+    "cl": "cookie lifetime",
 }
-LINK_TYPES = {"lnk_o": "custom link (s.tl 'o')", "lnk_d": "download link",
-              "lnk_e": "exit link"}
+LINK_TYPES = {
+    "lnk_o": "custom link (s.tl 'o')",
+    "lnk_d": "download link",
+    "lnk_e": "exit link",
+}
 
-ADOBE_HOST_HINTS = ("/b/ss/", "adobedc.net", "omtrdc.net", "2o7.net",
-                    "demdex.net", "tt.omtrdc.net", "everesttech.net")
+ADOBE_HOST_HINTS = (
+    "/b/ss/",
+    "adobedc.net",
+    "omtrdc.net",
+    "2o7.net",
+    "demdex.net",
+    "tt.omtrdc.net",
+    "everesttech.net",
+)
 
 
 # ------------------------------------------------------------------ input
 
+
 def read_requests(path):
     """Yield (url, body) tuples from a HAR file or a URL-per-line text file."""
-    text = sys.stdin.read() if path == "-" else open(path, encoding="utf-8",
-                                                      errors="replace").read()
+    text = (
+        sys.stdin.read()
+        if path == "-"
+        else open(path, encoding="utf-8", errors="replace").read()
+    )
     stripped = text.lstrip()
     if stripped.startswith("{") and '"log"' in stripped[:2000]:
         har = json.loads(text)
@@ -88,9 +134,18 @@ def classify(url):
     u = url.lower()
     if "/b/ss/" in u:
         return "appmeasurement"
-    if "/ee/" in u and ("interact" in u or "collect" in u) or "edge.adobedc.net" in u:
+    if (
+        "/ee/" in u
+        and ("interact" in u or "collect" in u)
+        or "edge.adobedc.net" in u
+    ):
         return "websdk"
-    if "tt.omtrdc.net" in u or "/rest/v1/delivery" in u or "/m2/" in u and "mbox" in u:
+    if (
+        "tt.omtrdc.net" in u
+        or "/rest/v1/delivery" in u
+        or "/m2/" in u
+        and "mbox" in u
+    ):
         return "target"
     if "demdex.net" in u:
         return "aam"
@@ -98,6 +153,7 @@ def classify(url):
 
 
 # ------------------------------------------------------- AppMeasurement
+
 
 def parse_context_data(pairs):
     """Context data is nested as c.=, a.=, x=1, .a=, .c= markers."""
@@ -128,8 +184,16 @@ def parse_products(s):
     for item in s.split(","):
         f = item.split(";")
         f += [""] * (6 - len(f))
-        rows.append({"category": f[0], "product": f[1], "units": f[2],
-                     "revenue": f[3], "events": f[4], "merch_evars": f[5]})
+        rows.append(
+            {
+                "category": f[0],
+                "product": f[1],
+                "units": f[2],
+                "revenue": f[3],
+                "events": f[4],
+                "merch_evars": f[5],
+            }
+        )
     return rows
 
 
@@ -145,13 +209,22 @@ def decode_appmeasurement(url, body):
     if body:
         pairs += parse_qsl(body, keep_blank_values=True)
     raw = dict(pairs)
-    hit = {"type": "AppMeasurement", "host": parts.hostname,
-           "report_suites": rsids.split(","), "library": lib,
-           "first_party_collection": not any(h in (parts.hostname or "")
-                                             for h in ("omtrdc.net", "2o7.net")),
-           "post_body_missing": len(pairs) <= 3 and not body,
-           "vars": {}, "evars": {}, "props": {}, "list_vars": {},
-           "context_data": parse_context_data(pairs), "flags": []}
+    hit = {
+        "type": "AppMeasurement",
+        "host": parts.hostname,
+        "report_suites": rsids.split(","),
+        "library": lib,
+        "first_party_collection": not any(
+            h in (parts.hostname or "") for h in ("omtrdc.net", "2o7.net")
+        ),
+        "post_body_missing": len(pairs) <= 3 and not body,
+        "vars": {},
+        "evars": {},
+        "props": {},
+        "list_vars": {},
+        "context_data": parse_context_data(pairs),
+        "flags": [],
+    }
     for k, v in pairs:
         if re.fullmatch(r"v\d+", k) and k != "v0":
             hit["evars"]["eVar" + k[1:]] = v
@@ -166,10 +239,16 @@ def decode_appmeasurement(url, body):
         for name, v in hit[bucket].items():
             if v.startswith("D="):
                 src = v[2:]
-                resolved = raw.get(src) or raw.get({"pageName": "gn"}.get(src, src))
-                hit[bucket][name] = f"{v} -> {resolved!r}" if resolved else f"{v} (unresolved)"
+                resolved = raw.get(src) or raw.get(
+                    {"pageName": "gn"}.get(src, src)
+                )
+                hit[bucket][name] = (
+                    f"{v} -> {resolved!r}" if resolved else f"{v} (unresolved)"
+                )
     pe = raw.get("pe")
-    hit["call"] = LINK_TYPES.get(pe, "page view (s.t)") if pe else "page view (s.t)"
+    hit["call"] = (
+        LINK_TYPES.get(pe, "page view (s.t)") if pe else "page view (s.t)"
+    )
     if "products" in raw:
         hit["products_parsed"] = parse_products(raw["products"])
     flags = hit["flags"]
@@ -178,19 +257,38 @@ def decode_appmeasurement(url, body):
     if "mid" not in raw and "aid" not in raw and "vid" not in raw:
         flags.append("No visitor ID (mid/aid/vid) on hit")
     if "aid" in raw and "mid" in raw:
-        flags.append("Both legacy aid and ECID mid present (grace-period/migration)")
+        flags.append(
+            "Both legacy aid and ECID mid present (grace-period/migration)"
+        )
     if not pe and not raw.get("pageName") and not raw.get("gn"):
         flags.append("Page view without pageName - reports fall back to URL")
     if len(hit["report_suites"]) > 1:
-        flags.append(f"Multi-suite tagging to {len(hit['report_suites'])} suites (secondary server calls are billed)")
-    if raw.get("events") and "purchase" in raw["events"] and not (raw.get("purchaseID") or raw.get("pi")):
-        flags.append("purchase without purchaseID - no de-duplication on reload")
-    if raw.get("events") and "purchase" in raw["events"] and "products" not in raw:
-        flags.append("purchase without products string - revenue cannot be recorded")
+        n_suites = len(hit["report_suites"])
+        flags.append(
+            f"Multi-suite tagging to {n_suites} "
+            "suites (secondary server calls are billed)"
+        )
+    if (
+        raw.get("events")
+        and "purchase" in raw["events"]
+        and not (raw.get("purchaseID") or raw.get("pi"))
+    ):
+        flags.append(
+            "purchase without purchaseID - no de-duplication on reload"
+        )
+    if (
+        raw.get("events")
+        and "purchase" in raw["events"]
+        and "products" not in raw
+    ):
+        flags.append(
+            "purchase without products string - revenue cannot be recorded"
+        )
     return hit
 
 
 # -------------------------------------------------------------- Web SDK
+
 
 def walk(obj, prefix=""):
     if isinstance(obj, dict):
@@ -206,13 +304,21 @@ def walk(obj, prefix=""):
 def decode_websdk(url, body):
     parts = urlsplit(url)
     q = dict(parse_qsl(parts.query))
-    hit = {"type": "Web SDK", "host": parts.hostname,
-           "first_party_collection": "adobedc.net" not in (parts.hostname or ""),
-           "datastream_id": q.get("configId") or q.get("dataStreamId"),
-           "request_id": q.get("requestId"), "events": [], "identity_map": {},
-           "consent": None, "flags": []}
+    hit = {
+        "type": "Web SDK",
+        "host": parts.hostname,
+        "first_party_collection": "adobedc.net" not in (parts.hostname or ""),
+        "datastream_id": q.get("configId") or q.get("dataStreamId"),
+        "request_id": q.get("requestId"),
+        "events": [],
+        "identity_map": {},
+        "consent": None,
+        "flags": [],
+    }
     if not body:
-        hit["flags"].append("Body not captured - Web SDK payloads are POST JSON; export a HAR")
+        hit["flags"].append(
+            "Body not captured - Web SDK payloads are POST JSON; export a HAR"
+        )
         return hit
     try:
         payload = json.loads(body)
@@ -221,89 +327,141 @@ def decode_websdk(url, body):
         return hit
     meta = payload.get("meta", {})
     hit["consent"] = meta.get("consent") or payload.get("consent")
-    hit["state_entries"] = [e.get("key") for e in meta.get("state", {}).get("entries", [])]
+    hit["state_entries"] = [
+        e.get("key") for e in meta.get("state", {}).get("entries", [])
+    ]
     hit["config_overrides"] = bool(meta.get("configOverrides"))
     for ev in payload.get("events", []):
         xdm = ev.get("xdm", {})
         idm = xdm.get("identityMap", {})
         for ns, ids in idm.items():
             hit["identity_map"].setdefault(ns, []).extend(
-                {"id": i.get("id"), "authenticatedState": i.get("authenticatedState"),
-                 "primary": i.get("primary")} for i in ids)
+                {
+                    "id": i.get("id"),
+                    "authenticatedState": i.get("authenticatedState"),
+                    "primary": i.get("primary"),
+                }
+                for i in ids
+            )
         aa = (ev.get("data") or {}).get("__adobe", {}).get("analytics", {})
-        hit["events"].append({
-            "eventType": xdm.get("eventType"),
-            "web.webPageDetails.name": xdm.get("web", {}).get("webPageDetails", {}).get("name"),
-            "commerce": list(xdm.get("commerce", {}).keys()),
-            "productListItems": len(xdm.get("productListItems", [])),
-            "xdm_fields": sorted(p for p, _ in walk(xdm) if not p.startswith("identityMap")),
-            "data.__adobe.analytics": aa,
-            "personalization.decisionScopes": (ev.get("query") or {}).get("personalization", {}).get("decisionScopes"),
-        })
+        hit["events"].append(
+            {
+                "eventType": xdm.get("eventType"),
+                "web.webPageDetails.name": xdm.get("web", {})
+                .get("webPageDetails", {})
+                .get("name"),
+                "commerce": list(xdm.get("commerce", {}).keys()),
+                "productListItems": len(xdm.get("productListItems", [])),
+                "xdm_fields": sorted(
+                    p for p, _ in walk(xdm) if not p.startswith("identityMap")
+                ),
+                "data.__adobe.analytics": aa,
+                "personalization.decisionScopes": (ev.get("query") or {})
+                .get("personalization", {})
+                .get("decisionScopes"),
+            }
+        )
     flags = hit["flags"]
     for ev in hit["events"]:
         if not ev["eventType"]:
             flags.append("Event without xdm.eventType")
-        if ev["eventType"] == "web.webpagedetails.pageViews" and not ev["web.webPageDetails.name"]:
+        if (
+            ev["eventType"] == "web.webpagedetails.pageViews"
+            and not ev["web.webPageDetails.name"]
+        ):
             flags.append("Page view without web.webPageDetails.name")
         if ev["data.__adobe.analytics"]:
-            flags.append("Uses data.__adobe.analytics (AA vars bypass XDM - not in AEP datasets)")
+            flags.append(
+                "Uses data.__adobe.analytics (AA vars bypass XDM - "
+                "not in AEP datasets)"
+            )
     if not hit["identity_map"]:
-        flags.append("No identityMap on request (ECID comes from cookie/state only)")
+        flags.append(
+            "No identityMap on request (ECID comes from cookie/state only)"
+        )
     return hit
 
 
 # ------------------------------------------------------- Target / AAM
 
+
 def decode_target(url, body):
     parts = urlsplit(url)
     q = dict(parse_qsl(parts.query, keep_blank_values=True))
-    hit = {"type": "Target", "host": parts.hostname, "flags": [],
-           "mbox": q.get("mbox"), "mbox3rdPartyId": q.get("mbox3rdPartyId"),
-           "mboxMCGVID": q.get("mboxMCGVID"), "sdid": q.get("mboxMCSDID")}
+    hit = {
+        "type": "Target",
+        "host": parts.hostname,
+        "flags": [],
+        "mbox": q.get("mbox"),
+        "mbox3rdPartyId": q.get("mbox3rdPartyId"),
+        "mboxMCGVID": q.get("mboxMCGVID"),
+        "sdid": q.get("mboxMCSDID"),
+    }
     if body:
         try:
             p = json.loads(body)
-            hit["mboxes"] = [m.get("name") for m in (p.get("execute") or {}).get("mboxes", [])]
+            hit["mboxes"] = [
+                m.get("name")
+                for m in (p.get("execute") or {}).get("mboxes", [])
+            ]
             hit["customerIds"] = (p.get("id") or {}).get("customerIds")
             hit["thirdPartyId"] = (p.get("id") or {}).get("thirdPartyId")
             hit["sdid"] = hit["sdid"] or (p.get("experienceCloud") or {}).get(
-                "analytics", {}).get("supplementalDataId")
+                "analytics", {}
+            ).get("supplementalDataId")
         except ValueError:
             pass
     if not hit["sdid"]:
-        hit["flags"].append("No supplemental data ID - A4T stitching to Analytics not evidenced")
+        hit["flags"].append(
+            "No supplemental data ID - A4T stitching to Analytics not evidenced"
+        )
     return hit
 
 
-def decode_aam(url, body):
+def decode_aam(url, unused_body):
     parts = urlsplit(url)
     q = parse_qsl(parts.query, keep_blank_values=True)
     d = dict(q)
-    return {"type": "Audience Manager / demdex", "host": parts.hostname,
-            "path": parts.path, "d_mid": d.get("d_mid"), "d_orgid": d.get("d_orgid"),
-            "d_cid": [v for k, v in q if k in ("d_cid", "d_cid_ic")],
-            "d_dpuuid": d.get("dpuuid") or d.get("d_dpuuid"),
-            "signals": {k: v for k, v in q if k.startswith("c_")},
-            "flags": []}
+    return {
+        "type": "Audience Manager / demdex",
+        "host": parts.hostname,
+        "path": parts.path,
+        "d_mid": d.get("d_mid"),
+        "d_orgid": d.get("d_orgid"),
+        "d_cid": [v for k, v in q if k in ("d_cid", "d_cid_ic")],
+        "d_dpuuid": d.get("dpuuid") or d.get("d_dpuuid"),
+        "signals": {k: v for k, v in q if k.startswith("c_")},
+        "flags": [],
+    }
 
 
 # ------------------------------------------------------------ PII scan
 
+
 def pii_scan(hit):
-    """Flag plaintext email/phone anywhere in decoded values. Values redacted."""
+    (
+        """Flag plaintext email/phone anywhere in decoded values. """
+        """Values redacted."""
+    )
     found = []
     for path, val in walk(hit):
         if not isinstance(val, str) or path.endswith("flags"):
             continue
         if EMAIL_RE.search(val):
             found.append(f"plaintext EMAIL in {path} ({len(val)} chars)")
-        elif PHONE_RE.fullmatch(val.strip()) and not HEX_RE.fullmatch(val.strip()):
+        elif PHONE_RE.fullmatch(val.strip()) and not HEX_RE.fullmatch(
+            val.strip()
+        ):
             found.append(f"possible PHONE in {path}")
         elif HEX_RE.fullmatch(val) and len(val) in (32, 40, 64):
             algo = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}[len(val)]
             found.append(f"{algo}-shaped hash in {path}: {val}")
     return found
+
+
+def _hash_email(m):
+    digest = hashlib.sha256(m.group().strip().lower().encode()).hexdigest()
+    return f"<EMAIL sha256:{digest[:12]}..>"
 
 
 def redact(hit):
@@ -313,17 +471,23 @@ def redact(hit):
         if isinstance(o, list):
             return [_r(v) for v in o]
         if isinstance(o, str) and EMAIL_RE.search(o):
-            return EMAIL_RE.sub(lambda m: f"<EMAIL sha256:{hashlib.sha256(m.group().strip().lower().encode()).hexdigest()[:12]}..>", o)
+            return EMAIL_RE.sub(_hash_email, o)
         return o
+
     return _r(hit)
 
 
-DECODERS = {"appmeasurement": decode_appmeasurement, "websdk": decode_websdk,
-            "target": decode_target, "aam": decode_aam}
+DECODERS = {
+    "appmeasurement": decode_appmeasurement,
+    "websdk": decode_websdk,
+    "target": decode_target,
+    "aam": decode_aam,
+}
 
 
 def print_hit(n, hit):
-    print(f"\n### {n}. {hit['type']} @ {hit.get('host')}")
+    hit_type, host = hit["type"], hit.get("host")
+    print(f"\n### {n}. {hit_type} @ {host}")
     skip = {"type", "host", "flags", "pii"}
     for k, v in hit.items():
         if k in skip or v in (None, {}, [], ""):
@@ -340,11 +504,21 @@ def print_hit(n, hit):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("input", help="HAR file, text file of URLs (URL<TAB>BODY), or - for stdin")
-    ap.add_argument("--json", action="store_true", help="machine-readable output")
-    ap.add_argument("--include-unknown", action="store_true",
-                    help="list Adobe-looking hosts the decoder did not classify")
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n\n", maxsplit=1)[0]
+    )
+    ap.add_argument(
+        "input",
+        help="HAR file, text file of URLs (URL<TAB>BODY), or - for stdin",
+    )
+    ap.add_argument(
+        "--json", action="store_true", help="machine-readable output"
+    )
+    ap.add_argument(
+        "--include-unknown",
+        action="store_true",
+        help="list Adobe-looking hosts the decoder did not classify",
+    )
     args = ap.parse_args()
 
     hits, unknown = [], set()
@@ -360,27 +534,51 @@ def main():
 
     summary = {
         "total": len(hits),
-        "by_type": {t: sum(1 for h in hits if h["type"] == t) for t in {h["type"] for h in hits}},
-        "report_suites": sorted({r for h in hits for r in h.get("report_suites", []) if r}),
-        "datastreams": sorted({h["datastream_id"] for h in hits if h.get("datastream_id")}),
+        "by_type": {
+            t: sum(1 for h in hits if h["type"] == t)
+            for t in {h["type"] for h in hits}
+        },
+        "report_suites": sorted(
+            {r for h in hits for r in h.get("report_suites", []) if r}
+        ),
+        "datastreams": sorted(
+            {h["datastream_id"] for h in hits if h.get("datastream_id")}
+        ),
         "collection_hosts": sorted({h["host"] for h in hits if h.get("host")}),
-        "both_appmeasurement_and_websdk": any(h["type"] == "AppMeasurement" for h in hits)
+        "both_appmeasurement_and_websdk": any(
+            h["type"] == "AppMeasurement" for h in hits
+        )
         and any(h["type"] == "Web SDK" for h in hits),
     }
     if args.json:
-        print(json.dumps({"summary": summary, "hits": hits, "unclassified_hosts": sorted(unknown)},
-                         indent=2, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "summary": summary,
+                    "hits": hits,
+                    "unclassified_hosts": sorted(unknown),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
         return
     print("# Adobe beacon decode\n")
     for k, v in summary.items():
         print(f"- **{k}**: {v}")
     if summary["both_appmeasurement_and_websdk"]:
-        print("- FLAG: AppMeasurement AND Web SDK both firing - check for double counting "
-              "(same report suite fed twice?)")
+        print(
+            "- FLAG: AppMeasurement AND Web SDK both firing - check "
+            "for double counting "
+            "(same report suite fed twice?)"
+        )
     for i, h in enumerate(hits, 1):
         print_hit(i, h)
     if unknown:
-        print("\n## Unclassified Adobe-looking hosts\n" + "\n".join(f"- {u}" for u in sorted(unknown)))
+        print(
+            "\n## Unclassified Adobe-looking hosts\n"
+            + "\n".join(f"- {u}" for u in sorted(unknown))
+        )
 
 
 if __name__ == "__main__":

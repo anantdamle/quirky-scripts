@@ -10,7 +10,7 @@ What "correct" looks like for Adobe identity, and how to assess whether the data
 fail independently.
 
 | Proposition | How it fails | How to test |
-|---|---|---|
+| --- | --- | --- |
 | A customer ID is actually being set | No `setCustomerIDs` / no authenticated `identityMap` entry | Visitor API `getCustomerIDs()`, `d_cid_ic` on demdex, XDM `identityMap` |
 | It is the *right* value | Different hash recipe, or a device ID mistaken for a person ID | Byte-compare, `hash_probe.py` |
 | It covers enough traffic | Only set on login page / checkout stack | Coverage per stack and per event type |
@@ -23,8 +23,8 @@ the share of *all* visits, which is what caps deterministic attribution.
 ## Adobe identity primitives
 
 | Identifier | Where it lives | Scope | Notes |
-|---|---|---|---|
-| **ECID** (MID) | `AMCV_<org>` cookie (`MCMID|…`), `s_ecid`, Web SDK `kndctr_<org>_identity`; `mid=` on `/b/ss/`, `identityMap.ECID` | Device/browser | Primary Analytics visitor ID since Visitor API. Not a person. |
+| --- | --- | --- | --- |
+| **ECID** (MID) | `AMCV_<org>` cookie (`MCMID | …`),`s_ecid`, Web SDK`kndctr_<org>_identity`;`mid=` on `/b/ss/`,`identityMap.ECID` | Device/browser | Primary Analytics visitor ID since Visitor API. Not a person. |
 | Legacy `s_vi` / `aid` | Third-party/first-party cookie on tracking server | Device | Grace period / pre-ECID visitors. `aid` + `mid` together = migration in progress. |
 | `s_fid` / `fid` | First-party fallback | Device | Used when `s_vi` blocked. Spikes in `fid` = cookie issues. |
 | `vid` (s.visitorID) | Custom | Whatever the site sets | Overrides ECID for visitor counting — if set to a CRM ID, Analytics visitor ≈ person (with privacy implications). |
@@ -37,7 +37,7 @@ the share of *all* visits, which is what caps deterministic attribution.
 ### Where customer IDs can be set — and observability
 
 | Path | Observable in browser? |
-|---|---|
+| --- | --- |
 | `setCustomerIDs` / `identityMap` / eVar on the client | **Yes** |
 | Launch **Event Forwarding**, Tealium **EventStream**, sGTM enrichment | **No** |
 | Processing rules copying context data → eVar | **No** (beacon shows context data only) |
@@ -61,7 +61,7 @@ Run `tms_library_audit.py` — `setCustomerIDs` or an `identityMap` update often
 that fires only on login success or order confirmation, which a no-purchase audit never sees.
 
 | Evidence | Conclusion |
-|---|---|
+| --- | --- |
 | No customer ID on the wire, none in the library | Not set client-side; may be server-side (Event Forwarding / processing rules / Customer Attributes) — request config |
 | None on the wire, present in a login/purchase rule | Configured but not triggered on pages visited |
 | Customer ID set with `authState` 0 (UNKNOWN) | Person-level stitching (CDA, People) may ignore it — should be 1 when logged in, 2 on logout |
@@ -94,7 +94,7 @@ device identifier.
 ## Identifiers worth cataloguing
 
 | Identifier | Record | Why |
-|---|---|---|
+| --- | --- | --- |
 | ECID | Value; consistent across AA/Web SDK/Target? stable anon→auth? | Device key; inconsistency = broken A4T and stitching |
 | Legacy `aid`/`fid`/`vid` | Present? | Visitor-count discontinuities, migration state |
 | Customer IDs (Visitor API) | Integration codes, values, authState | Person key in Experience Cloud |
