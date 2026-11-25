@@ -7,12 +7,13 @@ import subprocess
 import tempfile
 import unittest
 
-
 SCRIPTS = Path(__file__).resolve().parent
 GIT = shutil.which("git")
 
 
 class GitOlogTests(unittest.TestCase):
+    """git olog in plain and worktree-container layouts."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="git olog tests ")
         self.addCleanup(self.temp.cleanup)
@@ -22,35 +23,54 @@ class GitOlogTests(unittest.TestCase):
         for name in ("git-wt", "git-olog"):
             (self.bin / name).symlink_to(SCRIPTS / name)
         self.env = {
-            key: value for key, value in os.environ.items()
+            key: value
+            for key, value in os.environ.items()
             if not key.startswith("GIT_")
         }
-        self.env.update({
-            "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_AUTHOR_NAME": "Test User",
-            "GIT_AUTHOR_EMAIL": "test@example.invalid",
-            "GIT_COMMITTER_NAME": "Test User",
-            "GIT_COMMITTER_EMAIL": "test@example.invalid",
-            "GIT_TERMINAL_PROMPT": "0",
-        })
+        self.env.update(
+            {
+                "PATH": os.pathsep.join([str(self.bin), os.environ["PATH"]]),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_AUTHOR_NAME": "Test User",
+                "GIT_AUTHOR_EMAIL": "test@example.invalid",
+                "GIT_COMMITTER_NAME": "Test User",
+                "GIT_COMMITTER_EMAIL": "test@example.invalid",
+                "GIT_TERMINAL_PROMPT": "0",
+            }
+        )
         self.source = self.root / "source"
         self.container = self.root / "worktree container"
         self.main = self.container / "MAIN"
-        self.git(self.root, "init", "--initial-branch", "main", str(self.source))
-        self.git(self.source, "commit", "--allow-empty", "-m", "Initial fixture")
-        self.git(self.root, "wt", "clone", str(self.source), str(self.container))
+        self.git(
+            self.root, "init", "--initial-branch", "main", str(self.source)
+        )
+        self.git(
+            self.source, "commit", "--allow-empty", "-m", "Initial fixture"
+        )
+        self.git(
+            self.root, "wt", "clone", str(self.source), str(self.container)
+        )
 
     def git(self, cwd, *args, check=True):
         return subprocess.run(
-            [GIT, *args], cwd=cwd, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check,
+            [GIT, *args],
+            cwd=cwd,
+            env=self.env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=check,
         )
 
     def test_container_displays_main_history(self):
         result = self.git(self.container, "olog")
-        self.assertEqual(result.stdout, self.git(self.main, "log", "--oneline", "HEAD", "main", "-5").stdout)
+        self.assertEqual(
+            result.stdout,
+            self.git(
+                self.main, "log", "--oneline", "HEAD", "main", "-5"
+            ).stdout,
+        )
         self.assertIn("Initial fixture", result.stdout)
         self.assertNotIn("fatal:", result.stderr)
 
@@ -72,9 +92,16 @@ class GitOlogTests(unittest.TestCase):
         self.git(feature, "commit", "--allow-empty", "-m", "Feature fixture")
         (feature / "untracked.txt").write_text("local changes\n")
         result = self.git(feature, "olog")
-        self.assertEqual(result.stdout, self.git(feature, "log", "--oneline", "HEAD", "main", "-5").stdout)
-        self.assertEqual(self.git(feature, "branch", "--show-current").stdout, "feature\n")
-        self.assertEqual((feature / "untracked.txt").read_text(), "local changes\n")
+        self.assertEqual(
+            result.stdout,
+            self.git(feature, "log", "--oneline", "HEAD", "main", "-5").stdout,
+        )
+        self.assertEqual(
+            self.git(feature, "branch", "--show-current").stdout, "feature\n"
+        )
+        self.assertEqual(
+            (feature / "untracked.txt").read_text(), "local changes\n"
+        )
 
     def test_diverged_worktree_uses_graph(self):
         feature = self.container / "feature"
@@ -82,7 +109,18 @@ class GitOlogTests(unittest.TestCase):
         self.git(feature, "commit", "--allow-empty", "-m", "Feature fixture")
         self.git(self.main, "commit", "--allow-empty", "-m", "Main fixture")
         result = self.git(feature, "olog")
-        self.assertEqual(result.stdout, self.git(feature, "log", "--oneline", "--graph", "--boundary", "HEAD...main", "-5").stdout)
+        self.assertEqual(
+            result.stdout,
+            self.git(
+                feature,
+                "log",
+                "--oneline",
+                "--graph",
+                "--boundary",
+                "HEAD...main",
+                "-5",
+            ).stdout,
+        )
         self.assertIn("Feature fixture", result.stdout)
         self.assertIn("Main fixture", result.stdout)
 
@@ -93,7 +131,10 @@ class GitOlogTests(unittest.TestCase):
                     (self.root / "MAIN").mkdir()
                 result = self.git(self.root, "olog", check=False)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("git-olog: not a git repository or a worktree container", result.stderr)
+                self.assertIn(
+                    "git-olog: not a git repository or a worktree container",
+                    result.stderr,
+                )
                 self.assertNotIn("fatal:", result.stderr)
                 self.assertEqual(result.stdout, "")
 
