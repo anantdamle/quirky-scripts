@@ -1,14 +1,14 @@
 # Browser subagent prompts
 
-Two verbatim prompts for the `browser` subagent. Substitute `<SITE_URL>` and, in the signed-in
-prompt, the findings carried forward from the anonymous pass. Both front-load the safety rules,
-because a subagent only sees what it is given.
+Two verbatim prompts for the `browser` subagent. Substitute `<SITE_URL>` and, in
+the signed-in prompt, the findings carried forward from the anonymous pass. Both
+front-load the safety rules, because a subagent only sees what it is given.
 
 ---
 
 ## Anonymous audit prompt
 
-```
+```text
 Perform a read-only Adobe Analytics / Adobe Experience Cloud tag audit of <SITE_URL>. Do NOT log
 in, do NOT submit forms, do NOT enter personal data, do NOT place an order. Only navigate and
 click normal browsing links/buttons, and read network requests, console output and page JS.
@@ -127,10 +127,11 @@ Be precise. Quote exact variable names and values, redacting PII.
 
 ## Signed-in audit prompt
 
-Carry forward the anonymous findings — report suites, datastreams, library IDs, the anonymous
-data-layer identity object, ECID value, and any event that failed to fire. The diff is the value.
+Carry forward the anonymous findings — report suites, datastreams, library IDs,
+the anonymous data-layer identity object, ECID value, and any event that failed
+to fire. The diff is the value.
 
-```
+```text
 Continue the read-only Adobe tag audit of <SITE_URL>. The user has now SIGNED IN in this browser.
 
 ABSOLUTE SAFETY RULES — READ FIRST:

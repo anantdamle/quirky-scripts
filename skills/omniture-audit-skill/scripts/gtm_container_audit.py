@@ -102,7 +102,8 @@ def fetch_container(container_id, raw_dir=None):
             f"HTTP {e.code} fetching {container_id} (does it exist / "
             "is it published?)",
         )
-    except Exception as e:
+    # pylint: disable-next=broad-exception-caught
+    except Exception as e:  # report any fetch failure rather than crash
         return None, f"Failed to fetch {container_id}: {e}"
 
     if raw_dir:
@@ -184,7 +185,7 @@ def _metadata_name(obj):
 
 
 def _macro_label(macros, i):
-    if not (0 <= i < len(macros)):
+    if not 0 <= i < len(macros):
         return f"{{{{macro {i}}}}}"
     m = macros[i]
     if m.get("function") == "__e":
@@ -233,7 +234,7 @@ def _reachable_ids(val, macros, depth=0, seen=None):
         if fn == "__c":
             return _reachable_ids(m.get("vtp_value"), macros, depth + 1, seen)
         if fn in ("__remm", "__smm"):
-            for _k, v in _lookup_entries(m):
+            for _, v in _lookup_entries(m):
                 out |= _reachable_ids(v, macros, depth + 1, seen)
             out |= _reachable_ids(
                 m.get("vtp_defaultValue"), macros, depth + 1, seen
@@ -324,15 +325,15 @@ def _preferred_id(val, macros, depth=0, seen=None):
 
     # Every mapped key is a non-production environment, so production falls
     # through to the default.
-    if entries and all(_is_nonprod_key(k) for k, _v in entries):
+    if entries and all(_is_nonprod_key(k) for k, _ in entries):
         dflt = m.get("vtp_defaultValue")
         branch_ids = set()
-        for _k, v in entries:
+        for _, v in entries:
             branch_ids |= _reachable_ids(v, macros, depth + 1, seen)
         dflt_ids = _reachable_ids(dflt, macros, depth + 1, seen)
         # Only trust this when the default is genuinely distinct from the
         # non-prod branches - otherwise the inference tells us nothing.
-        if dflt_ids and not (dflt_ids & branch_ids):
+        if dflt_ids and not dflt_ids & branch_ids:
             return _preferred_id(dflt, macros, depth + 1, seen) or (
                 next(iter(dflt_ids)) if len(dflt_ids) == 1 else None
             )
@@ -341,16 +342,14 @@ def _preferred_id(val, macros, depth=0, seen=None):
     # down.
     found = {
         r
-        for r in (
-            _preferred_id(v, macros, depth + 1, seen) for _k, v in entries
-        )
+        for r in (_preferred_id(v, macros, depth + 1, seen) for _, v in entries)
         if r
     }
     if len(found) == 1:
         return next(iter(found))
     # Unambiguous single-valued branch (excluding the fallback default).
     branch_ids = set()
-    for _k, v in entries:
+    for _, v in entries:
         branch_ids |= _reachable_ids(v, macros, depth + 1, seen)
     return next(iter(branch_ids)) if len(branch_ids) == 1 else None
 
@@ -382,7 +381,7 @@ def resolve_measurement_id(val, macros, observed=None):
     if chosen:
         extra = sorted(ids - {chosen})
         desc = chosen + (
-            f" (lookup; other branches: {'|'.join(extra)})" if extra else ""
+            f" (lookup; other branches: {"|".join(extra)})" if extra else ""
         )
         return chosen, desc
     if len(ids) == 1:
@@ -394,7 +393,7 @@ def resolve_measurement_id(val, macros, observed=None):
             others = sorted(ids - {hits[0]})
             return hits[0], (
                 f"{hits[0]} (matched an observed wire ID; "
-                f"other branches: {'|'.join(others)})"
+                f"other branches: {"|".join(others)})"
             )
     if ids:
         return None, "AMBIGUOUS lookup: " + "|".join(sorted(ids))
@@ -422,7 +421,7 @@ def describe_predicate(pred, macros):
     negate = fn.startswith("!")
     op = OPS.get(fn.lstrip("!"), fn)
     left = _resolve_ref(pred.get("arg0"), macros)
-    return f"{left} {'not ' if negate else ''}{op} {pred.get('arg1', '')!r}"
+    return f"{left} {"not " if negate else ""}{op} {pred.get("arg1", "")!r}"
 
 
 def _event_predicate(pred, macros):
@@ -773,7 +772,7 @@ def check_app_suppression(ga4_tags):
         ev = (
             t["event_name"]
             if isinstance(t["event_name"], str)
-            else f"tag {t['index']}"
+            else f"tag {t["index"]}"
         )
         for rule in hits:
             # A rule matching every event is a container-wide exclusion.
@@ -1023,6 +1022,7 @@ def check_event_naming_conventions(ga4_tags, universe):
     A container listening for legacy names while another stack pushes GA4-native
     ones is why two stacks cannot share tagging - and the mismatch is silent.
     """
+    del ga4_tags  # kept for a uniform check signature
     native = sorted({e for e in universe if e in ECOMMERCE_EVENTS})
     legacy = sorted(
         {e for e in universe if ("." in e and not e.startswith("gtm."))}
@@ -1071,7 +1071,7 @@ def audit(container_id, data, include_all=False, observed_ids=None):
 
     for i, tag in enumerate(tags):
         fn = tag.get("function", "")
-        name = _metadata_name(tag) or f"tag_id {tag.get('tag_id', '?')}"
+        name = _metadata_name(tag) or f"tag_id {tag.get("tag_id", "?")}"
         trig = triggers.get(i, {"fire": [], "block": [], "fire_rules": []})
 
         if fn == "__ua":
@@ -1147,14 +1147,14 @@ def audit(container_id, data, include_all=False, observed_ids=None):
     for (dl, ga4, mid), entries in sorted(emissions.items()):
         if len(entries) < 2:
             continue
-        uncond = [t for t, u, _f in entries if u]
+        uncond = [t for t, u, _ in entries if u]
 
         # Two tags sharing a byte-identical firing rule will always fire
         # together, however many conditions that rule has. That is a stronger
         # signal than an unconditional trigger and catches duplicates the
         # unconditional test misses.
         rule_owners = {}
-        for t, _u, fires in entries:
+        for t, _, fires in entries:
             for desc in fires:
                 rule_owners.setdefault(desc, set()).add(t)
         shared = {
@@ -1165,7 +1165,7 @@ def audit(container_id, data, include_all=False, observed_ids=None):
             "datalayer_event": dl,
             "ga4_event": ga4,
             "measurement_id": mid,
-            "tags": [t for t, _u, _f in entries],
+            "tags": [t for t, _, _ in entries],
             "unconditional_tags": uncond,
             "shared_rules": shared,
         }
@@ -1243,9 +1243,9 @@ def print_checks(r):
             evs = ", ".join(g["events"][:6]) + (
                 " ..." if len(g["events"]) > 6 else ""
             )
-            print(f"  {', '.join(g['parameters'])}")
+            print(f"  {", ".join(g["parameters"])}")
             print(
-                f"      on {n} tag(s): {g['tags'][:12]}"
+                f"      on {n} tag(s): {g["tags"][:12]}"
                 + (" ..." if n > 12 else "")
             )
             print(f"      events: {evs}")
@@ -1274,7 +1274,7 @@ def print_checks(r):
             "tag-config problem."
         )
         for d in eco:
-            print(f"  tag {d['index']}: {d['event']}  ({d['name']})")
+            print(f"  tag {d["index"]}: {d["event"]}  ({d["name"]})")
 
     ident = ch.get("identity_wiring") or {}
     print("\n[IDENTITY] ", end="")
@@ -1285,7 +1285,7 @@ def print_checks(r):
         ev = [s["index"] for s in srcs if s["kind"] == "event tag"]
         for s in cfg:
             print(
-                f"    {s['kind']} at tag index {s['index']}"
+                f"    {s["kind"]} at tag index {s["index"]}"
                 f"  <-- set once, applies to all events"
             )
         if ev:
@@ -1346,8 +1346,8 @@ def print_checks(r):
     for idx, d in sorted((ident.get("per_tag") or {}).items())[:4]:
         if d["identity_parameters"]:
             print(
-                f"    e.g. tag {idx} ({d['event']}) identity params: "
-                f"{', '.join(d['identity_parameters'])}"
+                f"    e.g. tag {idx} ({d["event"]}) identity params: "
+                f"{", ".join(d["identity_parameters"])}"
             )
 
     app = ch.get("app_suppression") or {}
@@ -1372,15 +1372,15 @@ def print_checks(r):
         print("must come from the order system.")
         for b in app["blanket_rules"]:
             print(
-                f"  CONTAINER-WIDE exclusion on {b['tag_count']} "
-                f"tag(s): {b['rule']}"
+                f"  CONTAINER-WIDE exclusion on {b["tag_count"]} "
+                f"tag(s): {b["rule"]}"
             )
         if app.get("per_event"):
             print(
-                f"  Per-event suppression ({len(app['per_event'])} event(s)):"
+                f"  Per-event suppression ({len(app["per_event"])} event(s)):"
             )
             for ev, d in app["per_event"].items():
-                print(f"    {ev}: tags {d['tags']}")
+                print(f"    {ev}: tags {d["tags"]}")
                 for rule in d["example_rules"]:
                     print(f"        e.g. {rule}")
 
@@ -1388,11 +1388,11 @@ def print_checks(r):
     if legacy.get("ua_tags") or legacy.get("ua_ids_referenced"):
         print("\n[DEPRECATED] Universal Analytics traces.")
         if legacy.get("ua_tags"):
-            print(f"  UA tags in container: {legacy['ua_tags']}")
+            print(f"  UA tags in container: {legacy["ua_tags"]}")
         if legacy.get("ua_ids_referenced"):
             print(
                 "  UA property IDs referenced: "
-                f"{', '.join(legacy['ua_ids_referenced'])}"
+                f"{", ".join(legacy["ua_ids_referenced"])}"
             )
         if legacy.get("ua_ids_referenced") and not legacy.get("ua_tags"):
             print(
@@ -1412,7 +1412,7 @@ def print_checks(r):
     if len(props) > 1:
         print("\n[PROPERTIES] All GA4 properties reachable in this container:")
         for pid, how in props.items():
-            print(f"  {pid}  via {'; '.join(how)}")
+            print(f"  {pid}  via {"; ".join(how)}")
         print(
             "  Confirm which one the data export is wired to. Getting "
             "this wrong"
@@ -1428,7 +1428,7 @@ def print_checks(r):
             "needs union logic:"
         )
         for k, ids in inv["locale_split"].items():
-            print(f"    {k}: {', '.join(ids)}")
+            print(f"    {k}: {", ".join(ids)}")
 
     naming = ch.get("event_naming") or {}
     if naming.get("native_ecommerce_events") and naming.get(
@@ -1446,9 +1446,9 @@ def print_checks(r):
             "convention, the mismatch is silent - the container "
             "simply never matches."
         )
-        print(f"  native:     {', '.join(naming['native_ecommerce_events'])}")
+        print(f"  native:     {", ".join(naming["native_ecommerce_events"])}")
         print(
-            f"  namespaced: {', '.join(naming['namespaced_events'][:10])}"
+            f"  namespaced: {", ".join(naming["namespaced_events"][:10])}"
             + (" ..." if len(naming["namespaced_events"]) > 10 else "")
         )
 
@@ -1457,7 +1457,7 @@ def print_checks(r):
     if consent:
         print(f"{len(consent)} consent-related tag(s)/variable(s) found:")
         for c in consent[:8]:
-            print(f"  {c['kind']} {c['index']}: {c['name']}")
+            print(f"  {c["kind"]} {c["index"]}: {c["name"]}")
     else:
         print(
             "No consent-management or Consent Mode tag found in this container."
@@ -1475,13 +1475,13 @@ def print_checks(r):
 
 def print_report(r):
     print(
-        f"\n{'=' * 78}\n{r['container_id']}  (container version "
-        f"{r['version']})\n{'=' * 78}"
+        f"\n{"=" * 78}\n{r["container_id"]}  (container version "
+        f"{r["version"]})\n{"=" * 78}"
     )
     c = r["counts"]
     print(
-        f"{c['tags']} tags · {c['rules']} triggers · {c['macros']} variables · "
-        f"{len(r['ga4_event_tags'])} GA4 event tags"
+        f"{c["tags"]} tags · {c["rules"]} triggers · {c["macros"]} variables · "
+        f"{len(r["ga4_event_tags"])} GA4 event tags"
     )
     print(
         "Paused tags are omitted from published containers, so anything absent"
@@ -1491,7 +1491,7 @@ def print_report(r):
     if r["measurement_ids"]:
         print("\n### GA4 PROPERTIES TARGETED (resolved, tag count each)")
         for mid, n in r["measurement_ids"].items():
-            print(f"  {mid}  ({n} tag{'s' if n != 1 else ''})")
+            print(f"  {mid}  ({n} tag{"s" if n != 1 else ""})")
         if len(r["measurement_ids"]) > 1:
             print(
                 "  More than one property receives events from this container."
@@ -1536,7 +1536,7 @@ def print_report(r):
             "  Until then, treat the double-fire grouping below as provisional:"
         )
         print("  tags targeting DIFFERENT properties may be grouped together.")
-        print(f"  tags: {r['unresolved_property_tags']}")
+        print(f"  tags: {r["unresolved_property_tags"]}")
 
     if r["double_fire_confirmed"]:
         print("\n### DOUBLE-FIRE - CONFIRMED. Investigate first.")
@@ -1572,8 +1572,8 @@ def print_report(r):
         for d in r["double_fire_confirmed"]:
             tags = d["unconditional_tags"] or d["tags"]
             print(
-                f"  ! {d['datalayer_event']!r} -> GA4 {d['ga4_event']!r} "
-                f"-> {d['measurement_id']}  tags {tags}"
+                f"  ! {d["datalayer_event"]!r} -> GA4 {d["ga4_event"]!r} "
+                f"-> {d["measurement_id"]}  tags {tags}"
             )
             for desc, ts in d.get("shared_rules", {}).items():
                 print(f"      tags {ts} share an identical rule: {desc}")
@@ -1600,14 +1600,14 @@ def print_report(r):
         )
         for d in r["double_fire_possible"]:
             print(
-                f"  ? {d['datalayer_event']!r} -> GA4 {d['ga4_event']!r} "
-                f"-> {d['measurement_id']}  tags {d['tags']}"
+                f"  ? {d["datalayer_event"]!r} -> GA4 {d["ga4_event"]!r} "
+                f"-> {d["measurement_id"]}  tags {d["tags"]}"
             )
 
     if r["deprecated"]:
         print("\n### DEPRECATED TAGS")
         for t in r["deprecated"]:
-            print(f"  - tag {t['index']}: {t['name']} ({t['type']})")
+            print(f"  - tag {t["index"]}: {t["name"]} ({t["type"]})")
 
     if r["missing_ecommerce_events"]:
         print("\n### ECOMMERCE EVENTS WITH NO TAG IN THIS CONTAINER")
@@ -1629,7 +1629,7 @@ def print_report(r):
         )
         print("informative than what it currently does.")
         for m in r["js_event_mappings"]:
-            print(f"\n  {m['name']} (macro {m['macro_index']})")
+            print(f"\n  {m["name"]} (macro {m["macro_index"]})")
             for k, v in m["mappings"]:
                 print(f"    {k:<44} -> {v}")
             for k, v in m["conditional_mappings"]:
@@ -1653,20 +1653,20 @@ def print_report(r):
         if t["dynamic_event_name"]:
             flags.append("dynamic name")
         if t["blocked_by"]:
-            flags.append(f"{len(t['blocked_by'])} blocking rule(s)")
-        suffix = f"  [{', '.join(flags)}]" if flags else ""
-        print(f"\n  tag {t['index']}: {t['event_name']}{suffix}")
-        print(f"    name: {t['name']}")
-        print(f"    property: {t['measurement_id_desc']}")
+            flags.append(f"{len(t["blocked_by"])} blocking rule(s)")
+        suffix = f"  [{", ".join(flags)}]" if flags else ""
+        print(f"\n  tag {t["index"]}: {t["event_name"]}{suffix}")
+        print(f"    name: {t["name"]}")
+        print(f"    property: {t["measurement_id_desc"]}")
         if t["triggering_datalayer_events"]:
             print(
                 "    dataLayer events: "
-                f"{', '.join(t['triggering_datalayer_events'])}"
+                f"{", ".join(t["triggering_datalayer_events"])}"
             )
         if t["send_ecommerce_data"]:
             print(
-                f"    ecommerce: sendEcommerceData={t['send_ecommerce_data']} "
-                f"from={t['ecommerce_data_source']}"
+                f"    ecommerce: sendEcommerceData={t["send_ecommerce_data"]} "
+                f"from={t["ecommerce_data_source"]}"
             )
         for f in t["fires_on"]:
             print(f"    FIRES ON:  {f}")
@@ -1676,7 +1676,7 @@ def print_report(r):
     if r["other_tags"]:
         print("\n### OTHER TAGS")
         for t in r["other_tags"]:
-            print(f"  tag {t['index']}: {t['name']} ({t['type']})")
+            print(f"  tag {t["index"]}: {t["name"]} ({t["type"]})")
 
     print("\n### INTERPRETING A TAG THAT EXISTS BUT NEVER FIRES")
     print(
@@ -1768,10 +1768,10 @@ def print_cross_container(results):
     print("\nEcommerce event coverage by container:")
     for cid, have in per.items():
         ordered = [e for e in ECOMMERCE_EVENTS if e in have]
-        print(f"  {cid}: {', '.join(ordered) if ordered else '(none)'}")
+        print(f"  {cid}: {", ".join(ordered) if ordered else "(none)"}")
     if everywhere_missing:
         print(
-            f"\n  NOT PRESENT IN ANY CONTAINER: {', '.join(everywhere_missing)}"
+            f"\n  NOT PRESENT IN ANY CONTAINER: {", ".join(everywhere_missing)}"
         )
         print("  These are genuine gaps rather than a stack-boundary artefact.")
 
@@ -1785,12 +1785,12 @@ def print_cross_container(results):
             bool(n["native_ecommerce_events"]),
             bool(n["namespaced_events"]),
         )
-    natives = [c for c, (nat, _leg) in conv.items() if nat]
-    legacies = [c for c, (_nat, leg) in conv.items() if leg]
+    natives = [c for c, (nat, _) in conv.items() if nat]
+    legacies = [c for c, (_, leg) in conv.items() if leg]
     if natives and legacies and set(natives) != set(legacies):
         print("\nEvent-vocabulary mismatch between stacks:")
-        print(f"  GA4-native ecommerce names: {', '.join(natives)}")
-        print(f"  namespaced/legacy names:    {', '.join(legacies)}")
+        print(f"  GA4-native ecommerce names: {", ".join(natives)}")
+        print(f"  namespaced/legacy names:    {", ".join(legacies)}")
         print(
             "  If a stack pushes one convention into a container "
             "listening for the"
@@ -1812,14 +1812,14 @@ def print_cross_container(results):
     if len(prop_map) > 1:
         print("\nProperties fed, by container:")
         for pid, cids in sorted(prop_map.items()):
-            print(f"  {pid}: {', '.join(cids)}")
+            print(f"  {pid}: {", ".join(cids)}")
         partial = [p for p, c in prop_map.items() if len(c) < len(results)]
         if partial:
             print(
                 "  Properties fed by only SOME containers will have "
                 "partial coverage"
             )
-            print(f"  by construction: {', '.join(partial)}")
+            print(f"  by construction: {", ".join(partial)}")
             print(
                 "  Confirm which property the export uses before analysing it."
             )
@@ -1886,7 +1886,7 @@ def main():
         for r in results:
             print_report(r)
         if len(results) > 1:
-            print(f"\n{'=' * 78}\nCROSS-CONTAINER NOTE\n{'=' * 78}")
+            print(f"\n{"=" * 78}\nCROSS-CONTAINER NOTE\n{"=" * 78}")
             print(
                 "Attribute each finding to a stack. 'The site has no "
                 "view_cart' is"
