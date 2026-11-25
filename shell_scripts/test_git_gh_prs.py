@@ -7,12 +7,13 @@ import subprocess
 import tempfile
 import unittest
 
-
 SCRIPTS = Path(__file__).resolve().parent
 GIT = shutil.which("git")
 
 
 class GitGhPrsTests(unittest.TestCase):
+    """git gh-prs repository grouping with a stub gh."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="git gh-prs tests ")
         self.addCleanup(self.temp.cleanup)
@@ -22,7 +23,7 @@ class GitGhPrsTests(unittest.TestCase):
         for name in ("git-wt", "git-gh-prs"):
             (self.bin / name).symlink_to(SCRIPTS / name)
         gh = self.bin / "gh"
-        gh.write_text('''#!/bin/sh
+        gh.write_text("""#!/bin/sh
 case "$1 $2" in
     "auth status") exit 0 ;;
     "api user") printf '%s\\n' viewer ;;
@@ -37,28 +38,36 @@ case "$1 $2" in
         ;;
     *) exit 1 ;;
 esac
-''')
+""")
         gh.chmod(0o755)
         self.env = {
-            key: value for key, value in os.environ.items()
+            key: value
+            for key, value in os.environ.items()
             if not key.startswith("GIT_")
         }
         self.args_log = self.root / "gh-args"
-        self.env.update({
-            "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_AUTHOR_NAME": "Test User",
-            "GIT_AUTHOR_EMAIL": "test@example.invalid",
-            "GIT_COMMITTER_NAME": "Test User",
-            "GIT_COMMITTER_EMAIL": "test@example.invalid",
-            "TEST_GH_ARGS": str(self.args_log),
-        })
+        self.env.update(
+            {
+                "PATH": os.pathsep.join([str(self.bin), os.environ["PATH"]]),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_AUTHOR_NAME": "Test User",
+                "GIT_AUTHOR_EMAIL": "test@example.invalid",
+                "GIT_COMMITTER_NAME": "Test User",
+                "GIT_COMMITTER_EMAIL": "test@example.invalid",
+                "TEST_GH_ARGS": str(self.args_log),
+            }
+        )
 
     def git(self, cwd, *args):
         return subprocess.run(
-            [GIT, *args], cwd=cwd, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            [GIT, *args],
+            cwd=cwd,
+            env=self.env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
         )
 
     def clone(self):
@@ -71,8 +80,12 @@ esac
 
     def assert_current_first(self, cwd, *args):
         result = self.git(cwd, "gh-prs", *args)
-        self.assertTrue(result.stdout.startswith("owner/current"), result.stdout)
-        self.assertLess(result.stdout.index("Current PR"), result.stdout.index("Other PR"))
+        self.assertTrue(
+            result.stdout.startswith("owner/current"), result.stdout
+        )
+        self.assertLess(
+            result.stdout.index("Current PR"), result.stdout.index("Other PR")
+        )
         self.assertIn("Other repositories", result.stdout)
         self.assertIn("2 open pull request(s) total.", result.stdout)
         self.assertEqual(result.stderr, "")
@@ -97,8 +110,13 @@ esac
                 if create_main:
                     (self.root / "MAIN").mkdir()
                 result = self.git(self.root, "gh-prs")
-                self.assertTrue(result.stdout.startswith("All repositories"), result.stdout)
-                self.assertLess(result.stdout.index("Other PR"), result.stdout.index("Current PR"))
+                self.assertTrue(
+                    result.stdout.startswith("All repositories"), result.stdout
+                )
+                self.assertLess(
+                    result.stdout.index("Other PR"),
+                    result.stdout.index("Current PR"),
+                )
                 self.assertEqual(result.stderr, "")
 
     def test_container_preserves_search_arguments(self):

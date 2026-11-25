@@ -24,59 +24,84 @@ warn() { echo "git-gh-sync: warning: $*" >&2; }
 
 # Pull out -r/--remote <name> (anywhere in the arguments); keep the rest.
 REMOTE_ARG=""
-N=$#; I=0
+N=$#
+I=0
 while [ "$I" -lt "$N" ]; do
-    A=$1; shift; I=$((I + 1))
-    case "$A" in
-        -r|--remote)
-            [ "$I" -lt "$N" ] || { echo "git-gh-sync: $A needs a remote name" >&2; exit 1; }
-            REMOTE_ARG=$1; shift; I=$((I + 1)) ;;
-        --remote=*) REMOTE_ARG=${A#--remote=} ;;
-        *) set -- "$@" "$A" ;;
-    esac
+  A=$1
+  shift
+  I=$((I + 1))
+  case "$A" in
+    -r | --remote)
+      [ "$I" -lt "$N" ] || {
+        echo "git-gh-sync: $A needs a remote name" >&2
+        exit 1
+      }
+      REMOTE_ARG=$1
+      shift
+      I=$((I + 1))
+      ;;
+    --remote=*) REMOTE_ARG=${A#--remote=} ;;
+    *) set -- "$@" "$A" ;;
+  esac
 done
 
 # Resolve a 'git wt clone' container before reading any repository metadata.
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
-    if [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
-        cd MAIN
-    else
-        echo "git-gh-sync: not a git repository or a worktree container with a MAIN checkout" >&2
-        exit 1
-    fi
+  if [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
+    cd MAIN
+  else
+    echo "git-gh-sync: not a git repository or a worktree container with a MAIN checkout" >&2
+    exit 1
+  fi
 fi
 
 # Remote to use: -r/--remote, else wt.remote, 'origin', the current branch's
 # remote, then the first configured remote.
 resolve_remote() {
-    if [ -n "$REMOTE_ARG" ]; then
-        git remote | grep -qxF "$REMOTE_ARG" || { echo "git-gh-sync: no such remote '$REMOTE_ARG'" >&2; exit 1; }
-        echo "$REMOTE_ARG"; return
-    fi
-    R=$(git config --get wt.remote 2>/dev/null || true)
-    if [ -n "$R" ] && git remote | grep -qxF "$R"; then echo "$R"; return; fi
-    if git remote | grep -qx origin; then echo origin; return; fi
-    R=$(git config --get "branch.$(git branch --show-current 2>/dev/null).remote" 2>/dev/null || true)
-    if [ -n "$R" ] && git remote | grep -qxF "$R"; then echo "$R"; return; fi
-    R=$(git remote | head -n 1)
-    echo "${R:-origin}"
+  if [ -n "$REMOTE_ARG" ]; then
+    git remote | grep -qxF "$REMOTE_ARG" || {
+      echo "git-gh-sync: no such remote '$REMOTE_ARG'" >&2
+      exit 1
+    }
+    echo "$REMOTE_ARG"
+    return
+  fi
+  R=$(git config --get wt.remote 2>/dev/null || true)
+  if [ -n "$R" ] && git remote | grep -qxF "$R"; then
+    echo "$R"
+    return
+  fi
+  if git remote | grep -qx origin; then
+    echo origin
+    return
+  fi
+  R=$(git config --get "branch.$(git branch --show-current 2>/dev/null).remote" 2>/dev/null || true)
+  if [ -n "$R" ] && git remote | grep -qxF "$R"; then
+    echo "$R"
+    return
+  fi
+  R=$(git remote | head -n 1)
+  echo "${R:-origin}"
 }
 
 # GitHub OWNER/REPO for a remote, parsed from its URL (ssh or https)
 gh_repo_of() {
-    git remote get-url "$1" 2>/dev/null | sed -E 's#/+$##; s#\.git$##; s#^.*[:/]([^/:]+/[^/:]+)$#\1#'
+  git remote get-url "$1" 2>/dev/null | sed -E 's#/+$##; s#\.git$##; s#^.*[:/]([^/:]+/[^/:]+)$#\1#'
 }
 
 REMOTE=$(resolve_remote)
 GH_REPO=$(gh_repo_of "$REMOTE")
-[ -n "$GH_REPO" ] || { echo "git-gh-sync: cannot derive a GitHub repository from remote '$REMOTE'" >&2; exit 1; }
+[ -n "$GH_REPO" ] || {
+  echo "git-gh-sync: cannot derive a GitHub repository from remote '$REMOTE'" >&2
+  exit 1
+}
 
 # Fail loudly if gh can't see this repo (e.g. wrong active account); otherwise
 # every PR lookup below silently comes back empty and nothing is deleted.
 if ! GH_ERR=$(gh repo view "$GH_REPO" --json name 2>&1 >/dev/null); then
-    echo "git-gh-sync: gh cannot access this repository: $GH_ERR" >&2
-    echo "git-gh-sync: check 'gh auth status' and switch accounts with 'gh auth switch'" >&2
-    exit 1
+  echo "git-gh-sync: gh cannot access this repository: $GH_ERR" >&2
+  echo "git-gh-sync: check 'gh auth status' and switch accounts with 'gh auth switch'" >&2
+  exit 1
 fi
 
 echo "Using remote '$REMOTE' ($GH_REPO)"
@@ -90,68 +115,68 @@ ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 # Determine the main/default branch
 MAIN_BRANCH=$(git symbolic-ref "refs/remotes/$REMOTE/HEAD" 2>/dev/null | sed "s@^refs/remotes/$REMOTE/@@")
 if [ -z "$MAIN_BRANCH" ]; then
-    MAIN_BRANCH="main"
+  MAIN_BRANCH="main"
 fi
 
 # Worktree that has main checked out, if it isn't this one
 MAIN_DIR=""
 if [ "$HAS_WT" -eq 1 ]; then
-    P=$(git wt path "$MAIN_BRANCH" 2>/dev/null || true)
-    [ -n "$P" ] && [ "$P" != "$(git rev-parse --show-toplevel)" ] && MAIN_DIR="$P"
+  P=$(git wt path "$MAIN_BRANCH" 2>/dev/null || true)
+  [ -n "$P" ] && [ "$P" != "$(git rev-parse --show-toplevel)" ] && MAIN_DIR="$P"
 fi
 
 STASHED=0
 if [ -n "$MAIN_DIR" ]; then
-    # Worktree mode: "switch" to main by moving into its worktree; the
-    # original worktree is never modified, so no stash/restore is needed
-    echo "Switching to main worktree '$MAIN_DIR'..."
-    cd "$MAIN_DIR"
+  # Worktree mode: "switch" to main by moving into its worktree; the
+  # original worktree is never modified, so no stash/restore is needed
+  echo "Switching to main worktree '$MAIN_DIR'..."
+  cd "$MAIN_DIR"
 else
-    # Stash uncommitted changes if any exist
-    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-        echo "Stashing uncommitted changes..."
-        git stash push -m "git-gh-sync temporary stash" >/dev/null
-        STASHED=1
-    fi
+  # Stash uncommitted changes if any exist
+  if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+    echo "Stashing uncommitted changes..."
+    git stash push -m "git-gh-sync temporary stash" >/dev/null
+    STASHED=1
+  fi
 
-    # Always switch to main branch before syncing
+  # Always switch to main branch before syncing
+  case "$ORIGINAL_BRANCH" in
+    HEAD) ;;
+    "$MAIN_BRANCH") ;;
+    *)
+      echo "Switching to main branch '$MAIN_BRANCH'..."
+      git checkout "$MAIN_BRANCH" >/dev/null
+      ;;
+  esac
+
+  # Ensure cleanup restores stash and attempts to return to original branch on exit
+  cleanup() {
     case "$ORIGINAL_BRANCH" in
-        HEAD) ;;
-        "$MAIN_BRANCH") ;;
-        *)
-            echo "Switching to main branch '$MAIN_BRANCH'..."
-            git checkout "$MAIN_BRANCH" >/dev/null
-            ;;
+      HEAD) ;;
+      "$MAIN_BRANCH") ;;
+      *)
+        if git show-ref --verify --quiet "refs/heads/$ORIGINAL_BRANCH"; then
+          echo "Returning to previous branch '$ORIGINAL_BRANCH'..."
+          git checkout "$ORIGINAL_BRANCH" >/dev/null
+        else
+          echo "Previous branch '$ORIGINAL_BRANCH' was deleted; staying on '$MAIN_BRANCH'."
+        fi
+        ;;
     esac
 
-    # Ensure cleanup restores stash and attempts to return to original branch on exit
-    cleanup() {
-        case "$ORIGINAL_BRANCH" in
-            HEAD) ;;
-            "$MAIN_BRANCH") ;;
-            *)
-                if git show-ref --verify --quiet "refs/heads/$ORIGINAL_BRANCH"; then
-                    echo "Returning to previous branch '$ORIGINAL_BRANCH'..."
-                    git checkout "$ORIGINAL_BRANCH" >/dev/null
-                else
-                    echo "Previous branch '$ORIGINAL_BRANCH' was deleted; staying on '$MAIN_BRANCH'."
-                fi
-                ;;
-        esac
-
-        if [ "$STASHED" -eq 1 ]; then
-            echo "Restoring stashed changes..."
-            git stash pop >/dev/null
-        fi
-    }
-    trap cleanup EXIT
+    if [ "$STASHED" -eq 1 ]; then
+      echo "Restoring stashed changes..."
+      git stash pop >/dev/null
+    fi
+  }
+  trap cleanup EXIT
 fi
 
 # Sync main branch with origin safely
 echo "Updating '$MAIN_BRANCH' from remote..."
 if ! PULL_ERR=$(git pull --ff-only "$REMOTE" "$MAIN_BRANCH" 2>&1 >/dev/null); then
-    warn "fast-forward pull of '$MAIN_BRANCH' failed, fetching instead: $PULL_ERR"
-    git fetch "$REMOTE" "$MAIN_BRANCH"
+  warn "fast-forward pull of '$MAIN_BRANCH' failed, fetching instead: $PULL_ERR"
+  git fetch "$REMOTE" "$MAIN_BRANCH"
 fi
 
 # Check closed PR status ONLY for existing local branches
@@ -160,86 +185,86 @@ echo "Checking PR status for local branches..."
 GH_ERR_FILE=$(mktemp)
 
 # Iterate purely over local branch refs to guarantee clean names
-git for-each-ref refs/heads/ | while read -r HASH TYPE REF; do
-    BRANCH=$(echo "$REF" | sed 's@^refs/heads/@@')
-    [ -z "$BRANCH" ] && continue
+git for-each-ref refs/heads/ | while read -r _ _ REF; do
+  BRANCH=$(echo "$REF" | sed 's@^refs/heads/@@')
+  [ -z "$BRANCH" ] && continue
 
-    case "$BRANCH" in
-        "$MAIN_BRANCH") continue ;;
-    esac
+  case "$BRANCH" in
+    "$MAIN_BRANCH") continue ;;
+  esac
 
-    # Branches pushed to a different owner's repo (a fork) are PR heads
-    # named <owner>:<branch> on $GH_REPO
-    HEAD_REF="$BRANCH"
-    BR_REMOTE=$(git config --get "branch.${BRANCH}.remote" 2>/dev/null || true)
-    if [ -n "$BR_REMOTE" ] && [ "$BR_REMOTE" != "$REMOTE" ]; then
-        BR_OWNER=$(gh_repo_of "$BR_REMOTE" | cut -d/ -f1)
-        [ -n "$BR_OWNER" ] && [ "$BR_OWNER" != "${GH_REPO%%/*}" ] && HEAD_REF="$BR_OWNER:$BRANCH"
-    fi
+  # Branches pushed to a different owner's repo (a fork) are PR heads
+  # named <owner>:<branch> on $GH_REPO
+  HEAD_REF="$BRANCH"
+  BR_REMOTE=$(git config --get "branch.${BRANCH}.remote" 2>/dev/null || true)
+  if [ -n "$BR_REMOTE" ] && [ "$BR_REMOTE" != "$REMOTE" ]; then
+    BR_OWNER=$(gh_repo_of "$BR_REMOTE" | cut -d/ -f1)
+    [ -n "$BR_OWNER" ] && [ "$BR_OWNER" != "${GH_REPO%%/*}" ] && HEAD_REF="$BR_OWNER:$BRANCH"
+  fi
 
-    # A branch with no PR is normal; any other gh failure is worth reporting
-    if ! STATE=$(gh pr view "$HEAD_REF" -R "$GH_REPO" --json state --jq '.state' 2>"$GH_ERR_FILE"); then
-        STATE=""
-        grep -qi "no pull requests found" "$GH_ERR_FILE" ||
-            warn "could not check PR for '$BRANCH': $(cat "$GH_ERR_FILE")"
-    fi
+  # A branch with no PR is normal; any other gh failure is worth reporting
+  if ! STATE=$(gh pr view "$HEAD_REF" -R "$GH_REPO" --json state --jq '.state' 2>"$GH_ERR_FILE"); then
+    STATE=""
+    grep -qi "no pull requests found" "$GH_ERR_FILE" ||
+      warn "could not check PR for '$BRANCH': $(cat "$GH_ERR_FILE")"
+  fi
 
-    case "$STATE" in
-        MERGED|CLOSED)
-            if [ "$HAS_WT" -eq 1 ]; then
-                # Don't pull the rug out from under the caller's worktree
-                if [ -n "$MAIN_DIR" ] && [ "$BRANCH" = "$ORIGINAL_BRANCH" ]; then
-                    echo "Skipping $STATE PR:$BRANCH (current worktree)"
-                    continue
-                fi
-                echo "Deleting local branch connected to $STATE PR:$BRANCH"
-                git wt rm -D "$BRANCH" || warn "failed to remove '$BRANCH' (see above)"
-            else
-                echo "Deleting local branch connected to $STATE PR:$BRANCH"
-                git branch -D "$BRANCH" || warn "failed to delete branch '$BRANCH'"
-            fi
-            ;;
-    esac
+  case "$STATE" in
+    MERGED | CLOSED)
+      if [ "$HAS_WT" -eq 1 ]; then
+        # Don't pull the rug out from under the caller's worktree
+        if [ -n "$MAIN_DIR" ] && [ "$BRANCH" = "$ORIGINAL_BRANCH" ]; then
+          echo "Skipping $STATE PR:$BRANCH (current worktree)"
+          continue
+        fi
+        echo "Deleting local branch connected to $STATE PR:$BRANCH"
+        git wt rm -D "$BRANCH" || warn "failed to remove '$BRANCH' (see above)"
+      else
+        echo "Deleting local branch connected to $STATE PR:$BRANCH"
+        git branch -D "$BRANCH" || warn "failed to delete branch '$BRANCH'"
+      fi
+      ;;
+  esac
 done
 rm -f "$GH_ERR_FILE"
 
 # Optional force sync all local tracking branches to remote
 if [ "$1" = "down" ]; then
-    echo "Fetching all remotes and pruning deleted tracking branches..."
-    git fetch --all --prune >/dev/null
+  echo "Fetching all remotes and pruning deleted tracking branches..."
+  git fetch --all --prune >/dev/null
 
-    echo "Force syncing local branches to match remote tracking branches..."
-    git for-each-ref refs/heads/ | while read -r HASH TYPE REF; do
-        LOCAL=$(echo "$REF" | sed 's@^refs/heads/@@')
-        [ -z "$LOCAL" ] && continue
+  echo "Force syncing local branches to match remote tracking branches..."
+  git for-each-ref refs/heads/ | while read -r _ _ REF; do
+    LOCAL=$(echo "$REF" | sed 's@^refs/heads/@@')
+    [ -z "$LOCAL" ] && continue
 
-        REMOTE_BRANCH=$(git config --get "branch.${LOCAL}.merge" 2>/dev/null | sed 's@refs/heads/@@' || true)
-        REMOTE_NAME=$(git config --get "branch.${LOCAL}.remote" 2>/dev/null || true)
+    REMOTE_BRANCH=$(git config --get "branch.${LOCAL}.merge" 2>/dev/null | sed 's@refs/heads/@@' || true)
+    REMOTE_NAME=$(git config --get "branch.${LOCAL}.remote" 2>/dev/null || true)
 
-        if [ -n "$REMOTE_NAME" ] && [ -n "$REMOTE_BRANCH" ]; then
-            FULL_REMOTE="${REMOTE_NAME}/${REMOTE_BRANCH}"
-            if git show-ref --verify --quiet "refs/remotes/$FULL_REMOTE"; then
-                # Branches checked out in a worktree are reset inside it
-                WT=""
-                [ "$HAS_WT" -eq 1 ] && WT=$(git wt path "$LOCAL" 2>/dev/null || true)
-                if [ -n "$WT" ]; then
-                    if [ -n "$(git -C "$WT" status --porcelain -uno)" ]; then
-                        echo "Skipping $LOCAL (worktree $WT has uncommitted changes)"
-                        continue
-                    fi
-                    git -C "$WT" reset --hard "$FULL_REMOTE" >/dev/null
-                else
-                    case "$LOCAL" in
-                        "$MAIN_BRANCH")
-                            git reset --hard "$FULL_REMOTE" >/dev/null
-                            ;;
-                        *)
-                            git branch -f "$LOCAL" "$FULL_REMOTE" >/dev/null
-                            ;;
-                    esac
-                fi
-                echo "Reset $LOCAL ->$FULL_REMOTE"
-            fi
+    if [ -n "$REMOTE_NAME" ] && [ -n "$REMOTE_BRANCH" ]; then
+      FULL_REMOTE="${REMOTE_NAME}/${REMOTE_BRANCH}"
+      if git show-ref --verify --quiet "refs/remotes/$FULL_REMOTE"; then
+        # Branches checked out in a worktree are reset inside it
+        WT=""
+        [ "$HAS_WT" -eq 1 ] && WT=$(git wt path "$LOCAL" 2>/dev/null || true)
+        if [ -n "$WT" ]; then
+          if [ -n "$(git -C "$WT" status --porcelain -uno)" ]; then
+            echo "Skipping $LOCAL (worktree $WT has uncommitted changes)"
+            continue
+          fi
+          git -C "$WT" reset --hard "$FULL_REMOTE" >/dev/null
+        else
+          case "$LOCAL" in
+            "$MAIN_BRANCH")
+              git reset --hard "$FULL_REMOTE" >/dev/null
+              ;;
+            *)
+              git branch -f "$LOCAL" "$FULL_REMOTE" >/dev/null
+              ;;
+          esac
         fi
-    done
+        echo "Reset $LOCAL ->$FULL_REMOTE"
+      fi
+    fi
+  done
 fi

@@ -15,56 +15,78 @@
 
 # Pull out -r/--remote <name> (anywhere in the arguments); keep the rest.
 REMOTE_ARG=""
-N=$#; I=0
+N=$#
+I=0
 while [ "$I" -lt "$N" ]; do
-    A=$1; shift; I=$((I + 1))
-    case "$A" in
-        -r|--remote)
-            [ "$I" -lt "$N" ] || { echo "git-refresh-main: $A needs a remote name" >&2; exit 1; }
-            REMOTE_ARG=$1; shift; I=$((I + 1)) ;;
-        --remote=*) REMOTE_ARG=${A#--remote=} ;;
-        *) set -- "$@" "$A" ;;
-    esac
+  A=$1
+  shift
+  I=$((I + 1))
+  case "$A" in
+    -r | --remote)
+      [ "$I" -lt "$N" ] || {
+        echo "git-refresh-main: $A needs a remote name" >&2
+        exit 1
+      }
+      REMOTE_ARG=$1
+      shift
+      I=$((I + 1))
+      ;;
+    --remote=*) REMOTE_ARG=${A#--remote=} ;;
+    *) set -- "$@" "$A" ;;
+  esac
 done
 
 # Resolve a 'git wt clone' container before reading any repository metadata.
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
-    if [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
-        cd MAIN
-    else
-        echo "git-refresh-main: not a git repository or a worktree container with a MAIN checkout" >&2
-        exit 1
-    fi
+  if [ -d MAIN ] && git -C MAIN rev-parse --git-dir >/dev/null 2>&1; then
+    cd MAIN || exit 1
+  else
+    echo "git-refresh-main: not a git repository or a worktree container with a MAIN checkout" >&2
+    exit 1
+  fi
 fi
 
 # Remote to use: -r/--remote, else wt.remote, 'origin', the current branch's
 # remote, then the first configured remote.
 resolve_remote() {
-    if [ -n "$REMOTE_ARG" ]; then
-        git remote | grep -qxF "$REMOTE_ARG" || { echo "git-refresh-main: no such remote '$REMOTE_ARG'" >&2; exit 1; }
-        echo "$REMOTE_ARG"; return
-    fi
-    R=$(git config --get wt.remote 2>/dev/null || true)
-    if [ -n "$R" ] && git remote | grep -qxF "$R"; then echo "$R"; return; fi
-    if git remote | grep -qx origin; then echo origin; return; fi
-    R=$(git config --get "branch.$(git branch --show-current 2>/dev/null).remote" 2>/dev/null || true)
-    if [ -n "$R" ] && git remote | grep -qxF "$R"; then echo "$R"; return; fi
-    R=$(git remote | head -n 1)
-    echo "${R:-origin}"
+  if [ -n "$REMOTE_ARG" ]; then
+    git remote | grep -qxF "$REMOTE_ARG" || {
+      echo "git-refresh-main: no such remote '$REMOTE_ARG'" >&2
+      exit 1
+    }
+    echo "$REMOTE_ARG"
+    return
+  fi
+  R=$(git config --get wt.remote 2>/dev/null || true)
+  if [ -n "$R" ] && git remote | grep -qxF "$R"; then
+    echo "$R"
+    return
+  fi
+  if git remote | grep -qx origin; then
+    echo origin
+    return
+  fi
+  R=$(git config --get "branch.$(git branch --show-current 2>/dev/null).remote" 2>/dev/null || true)
+  if [ -n "$R" ] && git remote | grep -qxF "$R"; then
+    echo "$R"
+    return
+  fi
+  R=$(git remote | head -n 1)
+  echo "${R:-origin}"
 }
 REMOTE=$(resolve_remote) || exit 1
 
 # Worktree that has main checked out, if it isn't this one
 MAIN_DIR=""
 if command -v git-wt >/dev/null 2>&1; then
-    P=$(git wt path main 2>/dev/null)
-    [ -n "$P" ] && [ "$P" != "$(git rev-parse --show-toplevel)" ] && MAIN_DIR="$P"
+  P=$(git wt path main 2>/dev/null)
+  [ -n "$P" ] && [ "$P" != "$(git rev-parse --show-toplevel)" ] && MAIN_DIR="$P"
 fi
 
 if [ -n "$MAIN_DIR" ]; then
-    echo "Switching to 'main' worktree: $MAIN_DIR"
-    cd "$MAIN_DIR" && git pull "$REMOTE" main
-    exit $?
+  echo "Switching to 'main' worktree: $MAIN_DIR"
+  cd "$MAIN_DIR" && git pull "$REMOTE" main
+  exit $?
 fi
 
 # Store the currently checked-out branch name
@@ -90,5 +112,5 @@ git checkout main && git pull "$REMOTE" main && git checkout "$CURRENT_BRANCH"
 
 # Only pop from the stash stack if changes were stashed
 if [ "$WAS_STASHED" -eq 1 ]; then
-    git stash pop
+  git stash pop
 fi

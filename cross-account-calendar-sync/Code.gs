@@ -1,20 +1,23 @@
 /**
  * CROSS-ACCOUNT CALENDAR SYNC (HUB MODEL - NATIVE RECURRENCE)
- * * Required Advanced Services: 
+ * * Required Advanced Services:
  * - Google Calendar API (v3) must be enabled in Services.
  */
 
 const CONFIG = {
   // Replace with your actual @gmail.com address
-  CALENDAR_A_ID: 'your.personal@gmail.com', 
-  
-  // 'primary' refers to the calendar of the account running this script (B or C)
-  THIS_ACCOUNT_CALENDAR_ID: 'primary',      
+  CALENDAR_A_ID: 'your.personal@gmail.com',
 
-  // Unique identifier for the account running this script (e.g., 'ORG_B' or 'ORG_C')
-  // CRITICAL: Change this to a unique name (like 'ORG_C') when deploying in the second account.
-  THIS_ACCOUNT_ORIGIN_NAME: 'ORG_B', 
-  
+  // 'primary' refers to the calendar of the account running this script (B or
+  // C)
+  THIS_ACCOUNT_CALENDAR_ID: 'primary',
+
+  // Unique identifier for the account running this script (e.g., 'ORG_B' or
+  // 'ORG_C')
+  // CRITICAL: Change this to a unique name (like 'ORG_C') when deploying in the
+  // second account.
+  THIS_ACCOUNT_ORIGIN_NAME: 'ORG_B',
+
   // Internal tags used to prevent infinite loops and map events
   ORIGINAL_CALENDAR_ID_KEY: 'originalCalendarId',
   ORIGINAL_EVENT_ID_KEY: 'originalId',
@@ -23,10 +26,12 @@ const CONFIG = {
   // Color ID stamped on events exported FROM this spoke TO the hub.
   // This color persists when other spokes import from the hub.
   // Google Calendar color IDs: 1=Lavender, 2=Sage, 3=Grape, 4=Flamingo,
-  // 5=Banana, 6=Tangerine, 7=Peacock, 8=Graphite, 9=Blueberry, 10=Basil, 11=Tomato
+  // 5=Banana, 6=Tangerine, 7=Peacock, 8=Graphite, 9=Blueberry, 10=Basil,
+  // 11=Tomato
   EXPORT_COLOR_ID: '9',  // Blueberry — change per spoke deployment
 
-  // Color ID for events that originate from the hub (personal calendar) when imported to this spoke.
+  // Color ID for events that originate from the hub (personal calendar) when
+  // imported to this spoke.
   // These are the hub's own events (not forwarded from another spoke).
   // Leave null/empty to preserve the source event's color or use no color.
   HUB_IMPORT_COLOR_ID: '7'  // Peacock
@@ -44,17 +49,22 @@ function onCalendarUpdate(e) {
   }
 
   try {
-    // Look back 14 days to catch recent changes and exceptions (fallback if no syncToken)
+    // Look back 14 days to catch recent changes and exceptions (fallback if no
+    // syncToken)
     const timeMin = new Date();
-    timeMin.setDate(timeMin.getDate() - 14); 
-    
-    // The event object 'e' will contain the ID of the calendar that triggered the update.
+    timeMin.setDate(timeMin.getDate() - 14);
+
+    // The event object 'e' will contain the ID of the calendar that triggered
+    // the update.
     const changedCalendarId = e ? e.calendarId : null;
     const myEmail = Session.getEffectiveUser().getEmail();
-    
+
     // Determine if we should treat 'primary' as the trigger source
-    const isSpokeChanged = !changedCalendarId || changedCalendarId === myEmail || changedCalendarId === CONFIG.THIS_ACCOUNT_CALENDAR_ID;
-    const isHubChanged = !changedCalendarId || changedCalendarId === CONFIG.CALENDAR_A_ID;
+    const isSpokeChanged = !changedCalendarId ||
+        changedCalendarId === myEmail ||
+        changedCalendarId === CONFIG.THIS_ACCOUNT_CALENDAR_ID;
+    const isHubChanged =
+        !changedCalendarId || changedCalendarId === CONFIG.CALENDAR_A_ID;
 
     // 1. Sync THIS Account (B/C) to Personal (A) -> Keep Full Details
     if (isSpokeChanged) {
@@ -88,27 +98,28 @@ function onCalendarUpdate(e) {
  */
 function registerCalendarTriggers() {
   // Deletes existing triggers to prevent duplicates
-  ScriptApp.getProjectTriggers().forEach(trigger => ScriptApp.deleteTrigger(trigger));
-  
+  ScriptApp.getProjectTriggers().forEach(
+      trigger => ScriptApp.deleteTrigger(trigger));
+
   const myEmail = Session.getEffectiveUser().getEmail();
-  
+
   // Creates a trigger for the Spoke (THIS_ACCOUNT) calendar
   ScriptApp.newTrigger('onCalendarUpdate')
-    .forUserCalendar(myEmail)
-    .onEventUpdated()
-    .create();
-    
+      .forUserCalendar(myEmail)
+      .onEventUpdated()
+      .create();
+
   // Creates a trigger for the Hub (CALENDAR_A) calendar
   ScriptApp.newTrigger('onCalendarUpdate')
-    .forUserCalendar(CONFIG.CALENDAR_A_ID)
-    .onEventUpdated()
-    .create();
+      .forUserCalendar(CONFIG.CALENDAR_A_ID)
+      .onEventUpdated()
+      .create();
 
-  // Safety-net poll: onEventUpdated can occasionally miss or delay notifications
-  ScriptApp.newTrigger('onCalendarUpdate')
-    .timeBased()
-    .everyHours(1)
-    .create();
-    
-  Logger.log('Calendar event triggers + hourly safety poll created for ' + myEmail + ' and ' + CONFIG.CALENDAR_A_ID);
+  // Safety-net poll: onEventUpdated can occasionally miss or delay
+  // notifications
+  ScriptApp.newTrigger('onCalendarUpdate').timeBased().everyHours(1).create();
+
+  Logger.log(
+      'Calendar event triggers + hourly safety poll created for ' + myEmail +
+      ' and ' + CONFIG.CALENDAR_A_ID);
 }
