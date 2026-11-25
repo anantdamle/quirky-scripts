@@ -84,6 +84,8 @@ repos:
         name: no trailing whitespace
         entry: '[ \t]+$'
         language: pygrep
+        # Binary files (e.g. architecture.png) are not lines of text.
+        types: [text]
         stages: [pre-commit]
 
   # On push: super-linter in a container, with the same settings as CI.
